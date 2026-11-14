@@ -363,8 +363,13 @@ class Log:
 class Walker:
     def __init__(self, device, log, package, *, reveal="above", fraction=0.70, swipe_ms=1200, max_screens=200,
                  stable_stops=2, settle_s=0.6, on_blocked="stop", ask=None, sleep=time.sleep, say=print,
-                 rewind=True, max_rewind_scrolls=400, stop_at=None):
+                 rewind=True, max_rewind_scrolls=400, stop_at=None, by_tree=False):
         self.d, self.log, self.package = device, log, package
+        # Judge "settled" and "unchanged" by the view tree alone, not the screenshots: for screens of distinct
+        # text rows (Settings) on which something animates. About phone on a moto g47 (Android 16) has an
+        # animated card: every screenshot differed, so the walk never settled or saw its end and ran to its
+        # cap of 15 screenshots, over 10 minutes (reported by a tester, 14 November 2026).
+        self.by_tree = by_tree
         # Text that ends the walk once a screenshot shows it, for a long conversation of which only the newest
         # part is wanted (a known-data chat started inside an old thread, for example).
         self.stop_at = stop_at
@@ -398,7 +403,7 @@ class Walker:
         tree read instead of two: on a Pixel 7a a tree read took about 2.3 s and a screenshot 0.3 s).
         Without Pillow: tree, screenshot, tree, settled when the two trees agree. With capture off, one tree
         and no screenshot."""
-        if capture and pixels_available():
+        if capture and pixels_available() and not self.by_tree:
             return self.settled_capture_by_pixels()
         for attempt in range(1, 4):
             before = Tree(self.d.tree_raw())
@@ -600,7 +605,7 @@ class Walker:
         items that all look alike to the tree ("Photo", the same id) gives the same tree after a scroll of
         whole items, and the walk would stop early, calling the end reached. A clear shift is asked for, not
         just any difference, so an animation at the end of a list does not keep the walk going."""
-        if not (png and prev_png and pixels_available()):
+        if self.by_tree or not (png and prev_png and pixels_available()):
             return False
         box = tree.scroll_container(self.package)
         bounds = box["bounds"] if box else None
@@ -1047,13 +1052,23 @@ def identity_from_trees(export):
             if imei_ok(digits) and ("imei", digits) not in seen:
                 seen.add(("imei", digits))
                 found["imei"].append({"value": digits, "step": d["step"]})
-            label = t.strip().lower().rstrip(":")
+            # A Motorola labels per SIM: "Número de teléfono · Tarjeta SIM" (moto g47, Android 16).
+            label = t.strip().lower().rstrip(":").split(" \u00b7 ")[0].strip()
             for key, names in IDENTITY_LABELS.items():
                 if i + 1 < len(texts) and (label in names or re.fullmatch(r"(" + "|".join(map(re.escape, names)) + r") ?\d", label)):
                     v = texts[i + 1].strip()
+                    shown = v
+                    if key == "phone_number":
+                        # The number can follow a status ("Solo emergencia +1 ...", moto g47), or be missing
+                        # ("No disponible"): take the part that is a number, or nothing.
+                        m = re.search(r"\+?\d[\d\s().-]{5,}\d", v)
+                        v = m.group(0) if m and len(re.sub(r"\D", "", m.group(0))) >= 7 else ""
                     if v and (key, v) not in seen:
                         seen.add((key, v))
-                        found[key].append({"value": v, "step": d["step"], "label": t.strip()})
+                        item = {"value": v, "step": d["step"], "label": t.strip()}
+                        if shown != v:
+                            item["shown"] = shown
+                        found[key].append(item)
     return found
 
 
@@ -1063,7 +1078,9 @@ def identify(serial, out, device_label, case=None, say=print):
     the screenshots are still kept and chained, for the examiner to read. The values found go into a
     chained row; the examiner confirms them before they are used. Returns (export, found, note)."""
     dev = AdbDevice(serial)
-    dev.shell("am start -a android.settings.DEVICE_INFO_SETTINGS")
+    # In a task of its own: otherwise Settings comes to the front as it was left, and a phone left on
+    # Device details had that walked as About phone (moto g47, reported by a tester, 14 November 2026).
+    dev.shell("am start -a android.settings.DEVICE_INFO_SETTINGS -f 0x10008000")
     time.sleep(2)
     # Stock Android's About phone shows an Uptime line that changes every second, so the screen is never
     # still and uiautomator never gives its tree (Pixel 7a on Android 17, emulator on Android 15). One quick
@@ -1072,22 +1089,98 @@ def identify(serial, out, device_label, case=None, say=print):
     readable = b"</hierarchy>" in probe
     if readable:
         r = run_job(serial, "com.android.settings", out, "phone-identity", device_label, reveal="below", rewind=True,
-                    max_screens=15, case=case, say=say)
+                    max_screens=15, case=case, say=say, by_tree=True)
         export = r["export"]
     else:
         export = empty_export(dev, out, "phone-identity", device_label, case)
     note = ""
     if not readable or r["summary"]["screens"] == 0:
-        dev.shell("am start -a android.settings.DEVICE_INFO_SETTINGS")
+        dev.shell("am start -a android.settings.DEVICE_INFO_SETTINGS -f 0x10008000")
         time.sleep(1)
-        note = screenshots_without_tree(export, dev)
+        # Say why there was no walk: the tree could not be read, or the walk stopped before its first
+        # screenshot (another app in front, a screen that turned off), which is not the same thing.
+        why = None if not readable else r["summary"]["stop_reason"]
+        note = screenshots_without_tree(export, dev, why=why)
     found = identity_from_trees(export)
+    if not found["imei"]:
+        searched = imei_by_settings_search(export, dev, say)
+        note = " ".join(x for x in (note, searched) if x)
+        found = identity_from_trees(export)
     log = AppendLog(export, dev)
     log.add("system_event", "identity_read", {"found": found, "note": note,
-                                               "how": "From the view trees of Settings > About phone; an IMEI only when its check digit is right."})
+                                               "how": "From the view trees of Settings > About phone, and of the screen Settings' own "
+                                                      "search opens for IMEI when About phone gave none; an IMEI only when its check "
+                                                      "digit is right."})
     log.close()
     refresh_manifest(export, log.rows, dev)
     return export, found, note
+
+
+def tree_now(dev):
+    """The screen's view tree now, or None when uiautomator gives none (a screen that never keeps still)."""
+    raw = dev.adb("exec-out", "uiautomator", "dump", "/dev/tty", timeout=90)
+    i, j = raw.find(b"<?xml"), raw.rfind(b"</hierarchy>")
+    return None if i < 0 or j < 0 else raw[i:j + len(b"</hierarchy>")]
+
+
+def box_of(n):
+    m = BOUNDS.match(n.get("bounds") or "")
+    if not m:
+        return None
+    l, t, r, b = map(int, m.groups())
+    return (l, t, r, b) if r > l and b > t else None
+
+
+def center(n):
+    l, t, r, b = box_of(n)
+    return (l + r) // 2, (t + b) // 2
+
+
+def imei_by_settings_search(export, dev, say=print, word="IMEI"):
+    """When About phone gave no IMEI: opens Settings' own search, types IMEI (the same word in every
+    language) and opens the first result. On a moto g47 (Android 16) the IMEIs are not on About phone but
+    one screen in, in Device details ("Detalles del dispositivo"); the name of that entry differs by maker
+    and language, and IMEI does not. Where the result's screen gives a tree it is walked like About phone.
+    Each step is a chained row. Settings may keep IMEI among its recent searches. Returns a note."""
+    log = AppendLog(export, dev)
+    try:
+        # In a task of its own: otherwise the intent can go to a Settings task already open on another page.
+        dev.shell("am start -a android.settings.APP_SEARCH_SETTINGS -f 0x10008000")
+        time.sleep(3)
+        raw = tree_now(dev)
+        if raw is None:
+            log.add("system_event", "settings_search", {"result": "the search screen gave no view tree"})
+            return f"Settings' search for {word} could not be used: its screen gave no view tree."
+        tree = Tree(raw)
+        field = next((n for n in tree.nodes() if (n.get("class") or "").endswith("EditText")), None)
+        if field is None:
+            log.add("system_event", "settings_search", {"result": "no search field on the search screen"})
+            return f"Settings' search for {word} could not be used: no search field was found."
+        dev.tap(*center(field))
+        dev.shell(f"input text {word}")
+        time.sleep(3)
+        raw = tree_now(dev)
+        hits = [n for n in (Tree(raw).nodes() if raw else []) if word in (n.get("text") or "")
+                and not (n.get("class") or "").endswith("EditText") and box_of(n)]
+        if not hits:
+            log.add("system_event", "settings_search", {"typed": word, "result": f"no result names {word}"})
+            return f"Settings' search for {word} found nothing."
+        hit = min(hits, key=lambda n: box_of(n)[1])
+        log.add("system_event", "settings_search", {"typed": word, "opened": hit.get("text"), "results_naming_it": len(hits)})
+        dev.tap(*center(hit))
+        time.sleep(3)
+    finally:
+        log.close()
+        refresh_manifest(export, log.rows, dev)
+    if tree_now(dev) is None:
+        return (f"Settings' search for {word} opened a screen that gives no view tree either (About phone itself, with its "
+                "ticking clock, on stock Android); see the screenshots of About phone.")
+    log = AppendLog(export, dev)
+    walker = Walker(dev, log, "com.android.settings", reveal="below", max_screens=15, rewind=True, say=say, by_tree=True)
+    s = walker.run()
+    log.close()
+    refresh_manifest(export, log.rows, dev)
+    return f"Settings' search for {word} opened a screen with a view tree; {s['screens']} screenshot(s) of it were walked and read."
 
 
 def nearly_same(a, b):
@@ -1127,7 +1220,7 @@ def empty_export(dev, out, scenario, device_label, case=None):
     return export
 
 
-def screenshots_without_tree(export, dev, most=8):
+def screenshots_without_tree(export, dev, most=8, why=None):
     """Screenshots only, scrolling down, each hash in a chained row, until a scroll no longer changes the
     screen (a ticking clock aside): for a screen whose view tree cannot be read. Returns a note saying so."""
     # Settings can reopen the page where it was left: go to the top first, until a scroll changes nothing.
@@ -1150,12 +1243,15 @@ def screenshots_without_tree(export, dev, most=8):
         with open(os.path.join(export, "screens", name), "wb") as f:
             f.write(png)
         log.add("auto_event", "screenshot_without_tree", {"png_file": name, "png_sha256": sha256(png), "n": n,
-                                                          "why": "the phone gave no view tree for this screen"})
+                                                          "why": why or "the phone gave no view tree for this screen"})
         prev = png
         dev.swipe(540, 1700, 540, 900, 600)
         time.sleep(1.5)
     log.close()
     refresh_manifest(export, log.rows, dev)
+    if why:
+        return (f"The walk of About phone took no screenshot ({why}), so nothing was read from it; {n} screenshot(s) "
+                "of it were then taken without its text and are kept and chained, for the values to be read from them.")
     return (f"The phone gave no view tree for About phone, so nothing could be read from it; {n} screenshot(s) "
             "of it are kept and chained, for the values to be read from them.")
 
@@ -1386,7 +1482,7 @@ def app_in_front(serial, adb=None):
 
 def run_job(serial, package, out, scenario, device_label, mode="screen", reveal="above", rewind=True, fraction=0.70,
             swipe_ms=1200, max_screens=200, item_reveal="above", capture_list=True, choose=None, ask=None, say=print,
-            on_screenshot=None, should_stop=None, pause_gate=None, case=None, stop_at=None):
+            on_screenshot=None, should_stop=None, pause_gate=None, case=None, stop_at=None, by_tree=False):
     """One whole run, for the command line and the window alike. mode is "screen" (walk what is open) or
     "list" (choose rows, open and walk each). Returns a dict: export, ok, lines (the summary a person
     reads), summary, manifest."""
@@ -1398,7 +1494,7 @@ def run_job(serial, package, out, scenario, device_label, mode="screen", reveal=
     os.makedirs(export)
     log = Log(export, scenario, device_label, dev)
     walker = Walker(dev, log, package, reveal=reveal, fraction=fraction, swipe_ms=swipe_ms, max_screens=max_screens,
-                    on_blocked="ask" if ask else "stop", rewind=rewind, ask=ask, say=say, stop_at=stop_at)
+                    on_blocked="ask" if ask else "stop", rewind=rewind, ask=ask, say=say, stop_at=stop_at, by_tree=by_tree)
     if should_stop:
         walker.should_stop = should_stop
     if pause_gate:
