@@ -763,6 +763,11 @@ engine app, rows that share a title, right-to-left layouts, a list that scrolls 
 - It cannot capture a screen the app protects from screenshots. Those come back black and the result
   says so. The text may still be in the transcript: it was for the one such app tried (Silence) and
   one Settings screen.
+- It reads text only where the app shows it to Android. Zangi 6.6.4 draws its messages itself: in an
+  open chat Android reports each bubble as an empty frame with a time view and no text. A walk of a
+  known-data Zangi chat of 32 messages (Galaxy A16 5G, Android 16, 15 November 2026) took 9 screenshots
+  with no gaps and passed the export check, but its transcript holds 4 lines, all from the chat list
+  behind the conversation and none of the 32 messages. For such an app the screenshots are the record.
 - It documents what is on the phone. A conversation that needs the network to load older messages is
   documented as far as the phone has it.
 - It taps only the titles of the rows you choose. It does not tap inside a conversation, so it does
