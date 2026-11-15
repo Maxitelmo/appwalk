@@ -686,7 +686,7 @@ each exactly as logged and with the right direction, and the date line as other 
 walks found the two faults above (the keyboard, the title bar), now fixed.
 
 **The same two phones, Snapchat 14.32.0.54**, 15 November: a known-data chat of 74 numbered texts sent
-by adb taps (37 from each phone) and two made-up pictures, one from each phone's camera roll. Snapchat
+by adb taps (39 from the Galaxy, 35 from the moto) and two made-up pictures, one from each phone's camera roll. Snapchat
 puts each run of messages under a line naming its author, "ME" or the contact's name in capitals, with
 no view id; the `author_words` profile reads them. Walked from the chat (13 and 10 screenshots), no gaps,
 export check passed: on both phones the 74 texts, each exactly as logged and with the right direction.
