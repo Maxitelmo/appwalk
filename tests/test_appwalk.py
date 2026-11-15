@@ -603,6 +603,22 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual([x["text"] for x in merged].count("image"), 2)
         self.assertEqual([x["text"] for x in merged][:5], ["Test 550", "Samsung, 5:08 PM", "Samsung", "5:08 PM", "image"])
 
+    def test_a_picture_named_by_a_described_pattern_is_a_picture_line(self):
+        # As in Google Messages (Galaxy A16 5G and moto g play, 15 November 2026): a picture is a view with no id
+        # and no text, described "You sent an image 5:26 PM." or "<sender> sent an image 5:25 PM.".
+        import transcript, xml.etree.ElementTree as ET
+        xml = ('<hierarchy><node class="androidx.recyclerview.widget.RecyclerView" package="p" scrollable="true" '
+               'bounds="[0,100][720,1400]" text="" content-desc="" resource-id="">'
+               '<node class="android.view.View" package="p" bounds="[13,300][541,800]" text="" resource-id="" '
+               'content-desc="Ana sent an image    5:25 PM ."/>'
+               '<node class="android.view.View" package="p" bounds="[179,850][707,1350]" text="" resource-id="" '
+               'content-desc="You sent an image    5:26 PM ."/></node></hierarchy>')
+        prof = {"described_box_patterns": [".+ sent an? (image|photo)\\b.*"]}
+        lines = transcript.frame_lines(ET.fromstring(xml), "p", prof)
+        self.assertEqual([(x["text"][:17], x["described"], x["side"]) for x in lines],
+                         [("Ana sent an image", True, "left"), ("You sent an image", True, "right")])
+        self.assertEqual(transcript.frame_lines(ET.fromstring(xml), "p", {}), [])
+
     def test_repeated_identical_messages_keep_their_count(self):
         import transcript
         mk = lambda texts: [{"text": t, "rid": "x", "desc": "", "bounds": (0, i, 9, i + 1), "side": "left"} for i, t in enumerate(texts)]
