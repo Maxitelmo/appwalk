@@ -685,6 +685,15 @@ the chat (13 and 7 screenshots), no gaps, export check passed: on both phones th
 each exactly as logged and with the right direction, and the date line as other text. The first
 walks found the two faults above (the keyboard, the title bar), now fixed.
 
+**The same two phones, Snapchat 14.32.0.54**, 15 November: a known-data chat of 74 numbered texts sent
+by adb taps (37 from each phone) and two made-up pictures, one from each phone's camera roll. Snapchat
+puts each run of messages under a line naming its author, "ME" or the contact's name in capitals, with
+no view id; the `author_words` profile reads them. Walked from the chat (13 and 10 screenshots), no gaps,
+export check passed: on both phones the 74 texts, each exactly as logged and with the right direction.
+The pictures have no text or description in the view tree, so they are in the screenshots only; each
+shows in the transcript as an author line with no message under it. The chat had been left and opened
+again several times before the walk and still held every text.
+
 **The same two phones, Discord 353.11**, 15 November: a known-data direct-message chat of 50
 numbered texts sent by adb taps, 25 from each phone: 40 taking turns, then 10 in runs of three and
 four from one phone, which Discord shows under one author line. Discord shows every message in one
@@ -863,6 +872,8 @@ own. Teaching writes the same format. What a profile can say:
 | `unnamed_message_min_height` | text with no view id at all, on the left or right, counts as a message when its box is at least this many pixels tall; for apps that give message text no id (Instagram). It is a shape, not something the app names: pixels depend on the phone's screen, so check it on the phone you use |
 | `message_box_descriptions` | for apps whose views have no ids but describe their boxes (Threads: "Chat text message"): text inside a box with one of these descriptions is a message, on the side of its box. A box that runs into the box below it is a quote shown above a reply, and its text is not a message |
 | `described_box_descriptions` | boxes with one of these descriptions (Threads: "Chat animated media message", "Chat post share message") become one line holding the description, as a picture does. Only a box shown whole on a screenshot is taken, once |
+| `author_words` | for apps that head each run of messages with a line naming its author, with no view id: `{"own": <pattern>, "others_are_title": true}`. A line in capitals matching `own` heads this phone's messages (sent); with `others_are_title`, a line equal to the conversation's title in capitals heads the other side's (received). Every other line with no view id is a message and takes the direction of the author line above it. Snapchat: `{"own": "ME", "others_are_title": true}` (English only; in a group chat the senders' names are not the title, which was not tried) |
+| `time_patterns` | regular expressions; with `author_words`, a line whose whole text matches one is a time or a day, not a message (case ignored) |
 | `message_text_patterns` | regular expressions; a line whose whole text matches one is a message, and its text is the part named `text` (an `author` part may be named too). An entry can also be `{"pattern": ..., "direction": "sent" or "received"}` when the app writes the direction in the line (Telegram: "Received at 12:29 AM"). For apps that put a message in one view with more words around it (Messenger: "<first name>, <message>, double tap to see sent/receive date and time, ..."). The whole line stays in the description column |
 | `centred_time_patterns` | regular expressions; a centred line whose whole text matches one is a time, not a message, even when it carries a message's view id (Google Messages shows when a conversation starts that way: "11:14 PM"). Lines on the left or right are not affected, so a message that says a time stays a message |
 

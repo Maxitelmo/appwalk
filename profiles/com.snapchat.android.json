@@ -1,0 +1,8 @@
+{
+  "package": "com.snapchat.android",
+  "checked_with": "Snapchat 14.32.0.54 on a Galaxy A16 5G and a moto g play (Android 16, English), 15 November 2026, a known-data chat of 74 numbered texts and 2 pictures between the two phones",
+  "message_ids": [],
+  "author_words": {"own": "ME", "others_are_title": true},
+  "time_patterns": ["\\d{1,2}:\\d{2}\\s*[AP]M", "TODAY", "YESTERDAY", "(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)"],
+  "single_column": true
+}
