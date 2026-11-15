@@ -313,7 +313,7 @@ def text_joins(shift):
     return shift["agree"] >= 2 and shift["agree"] > shift["disagree"]
 
 
-def join(merged, frame, reveal, ticking=()):
+def join(merged, frame, reveal, ticking=(), shown=False):
     """Adds one frame to the sequence. Returns (new sequence, number of shared lines).
 
     The new frame overlaps the end the sequence grows from. Lines can change between two screenshots
@@ -325,7 +325,7 @@ def join(merged, frame, reveal, ticking=()):
     if not merged:
         return list(frame), None
     if reveal != "above":
-        out, shared = join(list(reversed(merged)), list(reversed(frame)), "above", ticking)
+        out, shared = join(list(reversed(merged)), list(reversed(frame)), "above", ticking, shown)
         return list(reversed(out)), shared
     # Reveal above: the new frame shows earlier lines, then the top of what is already held. Every place the
     # held sequence could start in the frame is scored by an alignment that allows gaps: a line both show
@@ -357,7 +357,12 @@ def join(merged, frame, reveal, ticking=()):
                 opts = []
             opts += [(f[i][j + 1] - 1, HELD_ONLY), (f[i + 1][j] - 1, FRAME_ONLY)]
             f[i][j], move[i][j] = max(opts, key=lambda o: (o[0], -o[1]))
-    best, best_score, best_shared, best_inserts = None, 0, 0, None
+    # shown: the two screenshots are already shown to overlap (lines moved together, or the pictures line up), so
+    # the best place with a shared line is taken even when its score is not above zero. Discord on a Galaxy A16 5G
+    # (15 November 2026): a picture cut by the list's edge on both screenshots shared only itself and its row,
+    # while the author and time above it showed on one screenshot only; the score was 0 and the picture was
+    # listed twice.
+    best, best_score, best_shared, best_inserts = None, (float("-inf") if shown else 0), 0, None
     for d in range(n):
         i, j, shared, inserts, pending = d, 0, 0, [], []
         while i < n:
@@ -574,7 +579,7 @@ def build(export, profile_folder=None):
                     px = picture_overlap(os.path.join(export, "screens", os.path.basename(prev_png)),
                                          os.path.join(export, "screens", os.path.basename(png)), cb, w["reveal"]) if prev_png and cb else None
                 if text_joins(ts) or px or not frame:
-                    merged, shared = join(merged, kept, w["reveal"], ticking)
+                    merged, shared = join(merged, kept, w["reveal"], ticking, shown=bool(frame))
                     if px:
                         shared = "picture"
                         by_picture += 1
