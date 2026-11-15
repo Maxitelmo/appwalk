@@ -90,6 +90,9 @@ def frame_lines(tree_path, package, profile=None):
     # message's side; a box described as media becomes one line holding its description.
     msg_descs = set((profile or {}).get("message_box_descriptions", []))
     media_descs = set((profile or {}).get("described_box_descriptions", []))
+    # Descriptions that change with each picture (Google Messages, 15 November 2026: "You sent an image 5:26 PM."
+    # and "<sender> sent an image 5:25 PM." on a view with no id and no text) are named by patterns instead.
+    media_pats = [re.compile(p) for p in (profile or {}).get("described_box_patterns", [])]
     msg_boxes = sorted({box(n) for n in node.iter("node") if msg_descs and (n.get("content-desc") or "") in msg_descs and box(n)},
                        key=lambda x: x[1])
     # A reply shows the message it answers just above it, in a box with the same description, drawn so it
@@ -132,7 +135,8 @@ def frame_lines(tree_path, package, profile=None):
                         "bounds": b, "side": side_of(sb, cb), "described": False, "in_message_box": bool(in_box),
                         "bubble": sb if sb is not b else None,
                         "title_caps": t.strip() == t.strip().upper() and t.strip() in title_caps})
-        elif n.get("content-desc") and n.get("content-desc") in media_descs:
+        elif n.get("content-desc") and (n.get("content-desc") in media_descs or
+                                        any(p.fullmatch(n.get("content-desc")) for p in media_pats)):
             # One line per box: Threads repeats a description on a nested view of the same size, and puts
             # "Video preview" inside a shared post that is already a line.
             if any(x[0] <= b[0] and x[1] <= b[1] and b[2] <= x[2] and b[3] <= x[3] for x in media_taken):
