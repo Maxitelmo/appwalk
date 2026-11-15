@@ -98,6 +98,11 @@ def frame_lines(tree_path, package, profile=None):
     # into the next one is a quote, and its text is not a message.
     msg_boxes = [x for i, x in enumerate(msg_boxes) if not any(y[1] < x[3] and y[1] > x[1] for y in msg_boxes[i + 1:])]
     parent = {ch: p for p in node.iter() for ch in p}
+    # Text outside the list (the conversation's title), in capitals: an app can head each run of messages with the
+    # other side's name written that way (Snapchat 14.32: "TESTING MOTTO" under a title "Testing Motto").
+    inside = {id(n) for n in node.iter()}
+    title_caps = {(n.get("text") or "").strip().upper() for n in root.iter("node")
+                  if id(n) not in inside and (n.get("text") or "").strip()}
     taken = set()
     media_taken = []
     out = []
@@ -122,9 +127,11 @@ def frame_lines(tree_path, package, profile=None):
         if in_box:
             sb = in_box
         if n.get("text"):
-            out.append({"text": n.get("text"), "desc": n.get("content-desc") or "", "rid": rid, "parent_rid": parent_rid,
+            t = n.get("text")
+            out.append({"text": t, "desc": n.get("content-desc") or "", "rid": rid, "parent_rid": parent_rid,
                         "bounds": b, "side": side_of(sb, cb), "described": False, "in_message_box": bool(in_box),
-                        "bubble": sb if sb is not b else None})
+                        "bubble": sb if sb is not b else None,
+                        "title_caps": t.strip() == t.strip().upper() and t.strip() in title_caps})
         elif n.get("content-desc") and n.get("content-desc") in media_descs:
             # One line per box: Threads repeats a description on a nested view of the same size, and puts
             # "Video preview" inside a shared post that is already a line.
@@ -413,6 +420,21 @@ def classify(line, profile):
         return "other", "", ""
     if rid in profile.get("author_ids", []):
         return "author", "", ""
+    # An app that names who wrote a run of messages in a line of its own, by words and with no view id
+    # (Snapchat 14.32): "own" is a pattern for this phone's line ("ME"); with "others_are_title", a line equal
+    # to the conversation's title in capitals is the other side's. Every other line with no id is a message,
+    # unless a time pattern says it is a time; the walk gives each message its author's direction.
+    words = profile.get("author_words")
+    if words:
+        text = line["text"].strip()
+        if text == text.upper() and re.fullmatch(words.get("own", "(?!)"), text):
+            return "author", "sent", "the app's own words (the line naming its author)"
+        if words.get("others_are_title") and line.get("title_caps"):
+            return "author", "received", "the app's own words (the line naming its author)"
+        if any(re.fullmatch(p, text, re.I) for p in profile.get("time_patterns", [])):
+            return "time", "", ""
+        if not rid and not line.get("described"):
+            return "message", "", ""
     role = "described" if line.get("described") else "message"
     if line.get("from_pattern"):
         if line.get("pattern_direction"):
@@ -587,8 +609,15 @@ def build(export, profile_folder=None):
             notes.append(f"{w['item'] or '(the screen walked)'}: {lined_up} bubble(s) sat near the middle of the list; each was "
                          "given the side of the edge it lines up with, the edge the other bubbles of that side share")
         last_time = ""
+        author_dir = None
         for i, x in enumerate(merged, 1):
             role, direction, basis = classify(x, profile)
+            if profile and profile.get("author_words"):
+                if role == "author":
+                    author_dir = (direction, basis)
+                    direction, basis = "", ""
+                elif role == "message" and author_dir:
+                    direction, basis = author_dir
             if profile and profile.get("single_column") and role in ("message", "author", "described"):
                 x["side"] = "left"
             if role == "time":

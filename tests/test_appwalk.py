@@ -578,6 +578,18 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(texts[i - 3:i], ["Motto, 10:17 AM", "Motto", "10:17 AM"])
         self.assertEqual(shared, 6)
 
+    def test_author_words_give_each_message_its_direction(self):
+        # As in Snapchat 14.32 (Galaxy A16 5G, 15 November 2026): "ME" heads this phone's messages and the
+        # conversation's title in capitals heads the other side's; none of them has a view id.
+        import transcript
+        prof = {"author_words": {"own": "ME", "others_are_title": True}, "time_patterns": ["TODAY"], "single_column": True}
+        mk = lambda t, caps=False: {"text": t, "rid": "", "desc": "", "side": "left", "title_caps": caps}
+        self.assertEqual(transcript.classify(mk("ME"), prof)[:2], ("author", "sent"))
+        self.assertEqual(transcript.classify(mk("ANA LOPEZ", True), prof)[:2], ("author", "received"))
+        self.assertEqual(transcript.classify(mk("TODAY"), prof)[0], "time")
+        self.assertEqual(transcript.classify(mk("OK"), prof)[0], "message")       # capitals, but not the title
+        self.assertEqual(transcript.classify(mk("me"), prof)[0], "message")       # not in capitals
+
     def test_repeated_identical_messages_keep_their_count(self):
         import transcript
         mk = lambda texts: [{"text": t, "rid": "x", "desc": "", "bounds": (0, i, 9, i + 1), "side": "left"} for i, t in enumerate(texts)]
