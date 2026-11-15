@@ -557,6 +557,27 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(shared, 2)
         self.assertEqual([x["text"] for x in merged], ["m3", "m4", "m5", "m6", "m7"])
 
+    def test_a_line_hidden_at_the_edge_does_not_shift_the_join(self):
+        # As in Discord on a Galaxy A16 5G (15 November 2026): every message is a row header, an author, a time
+        # and the text, and the authors take turns. The held top lost its author and time under the title bar.
+        import transcript
+        def rows(items):
+            out = []
+            for n, who in items:
+                for t, r in ((f"{who}, 10:17 AM", ""), (who, "p:id/author_name"), ("10:17 AM", "p:id/timestamp"), (f"Test {n}", "")):
+                    out.append({"text": t, "rid": r, "desc": "", "bounds": (0, len(out), 9, len(out) + 1), "side": "left"})
+            return out
+        held = rows([(14, "Motto"), (15, "Samsung"), (16, "Motto")])
+        del held[1:3]                                        # author and time of message 14 hidden at the edge
+        new = rows([(12, "Motto"), (13, "Samsung"), (14, "Motto"), (15, "Samsung")])
+        merged, shared = transcript.join(list(held), new, "above")
+        texts = [x["text"] for x in merged]
+        self.assertEqual([t for t in texts if t.startswith("Test")], ["Test 12", "Test 13", "Test 14", "Test 15", "Test 16"])
+        # The author and time of 14 come back from the frame that showed them.
+        i = texts.index("Test 14")
+        self.assertEqual(texts[i - 3:i], ["Motto, 10:17 AM", "Motto", "10:17 AM"])
+        self.assertEqual(shared, 6)
+
     def test_repeated_identical_messages_keep_their_count(self):
         import transcript
         mk = lambda texts: [{"text": t, "rid": "x", "desc": "", "bounds": (0, i, 9, i + 1), "side": "left"} for i, t in enumerate(texts)]

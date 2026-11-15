@@ -320,22 +320,64 @@ def join(merged, frame, reveal, ticking=()):
     if reveal != "above":
         out, shared = join(list(reversed(merged)), list(reversed(frame)), "above", ticking)
         return list(reversed(out)), shared
-    # Reveal above: the new frame shows earlier lines, then the top of what is already held. Try every place
-    # the held sequence could start in the frame; score each by lines that agree minus lines that do not,
-    # position by position. A changed line or one cut off at the edge costs one point instead of the join.
+    # Reveal above: the new frame shows earlier lines, then the top of what is already held. Every place the
+    # held sequence could start in the frame is scored by an alignment that allows gaps: a line both show
+    # scores one; a line that changed (held version kept), a line only the held sequence has, or a line only
+    # the frame has costs one; a ticked relative time costs nothing. Only a line of the same named view can
+    # change in place (a time); two different texts with no view id are two lines, not one that changed, or
+    # one message would stand in for another wherever lines repeat. Gaps matter where the list's edge hid a
+    # line on one screenshot and not the other. Discord on a Galaxy A16 5G (15 November 2026) lost an author or
+    # time line at the top edge, and a strict line-by-line comparison then joined two screens at the wrong
+    # place: 2 of 50 messages were dropped and 3 repeated, among lines that repeat every message (author,
+    # time). A line only the frame has is put back where it sat, if a shared line follows it in the frame;
+    # one at the frame's far edge (cut off) is not.
     a, b = [key(x) for x in merged], [key(x) for x in frame]
-    best, best_score, best_shared = None, 0, 0
-    for d in range(len(b)):
-        n = min(len(b) - d, len(a))
-        agree = sum(1 for i in range(n) if b[d + i] == a[i])
-        neutral = sum(1 for i in range(n) if b[d + i] != a[i] and b[d + i][1] == a[i][1] and a[i][1] in ticking
-                      and ticked(a[i][0], b[d + i][0]))
-        score = agree - (n - agree - neutral)
-        if agree and score > best_score:
-            best, best_score, best_shared = d, score, agree
+    n, m = len(b), min(len(a), 2 * len(b) + 10)
+    MATCH, TICK, CHANGED, HELD_ONLY, FRAME_ONLY = range(5)
+    f = [[0] * (m + 1) for _ in range(n + 1)]
+    move = [[None] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        f[i][m] = f[i + 1][m] - 1
+        move[i][m] = FRAME_ONLY
+        for j in range(m - 1, -1, -1):
+            if b[i] == a[j]:
+                opts = [(1 + f[i + 1][j + 1], MATCH)]
+            elif b[i][1] == a[j][1] and a[j][1] in ticking and ticked(a[j][0], b[i][0]):
+                opts = [(f[i + 1][j + 1], TICK)]
+            elif b[i][1] and b[i][1] == a[j][1]:
+                opts = [(f[i + 1][j + 1] - 1, CHANGED)]
+            else:
+                opts = []
+            opts += [(f[i][j + 1] - 1, HELD_ONLY), (f[i + 1][j] - 1, FRAME_ONLY)]
+            f[i][j], move[i][j] = max(opts, key=lambda o: (o[0], -o[1]))
+    best, best_score, best_shared, best_inserts = None, 0, 0, None
+    for d in range(n):
+        i, j, shared, inserts, pending = d, 0, 0, [], []
+        while i < n:
+            mv = move[i][j]
+            if mv == MATCH:
+                shared += 1
+                inserts += pending
+                pending = []
+            if mv in (MATCH, TICK, CHANGED):
+                i, j = i + 1, j + 1
+            elif mv == HELD_ONLY:
+                j += 1
+            else:
+                pending.append((j, frame[i]))
+                i += 1
+        if shared and f[d][0] > best_score:
+            best, best_score, best_shared, best_inserts = d, f[d][0], shared, inserts
     if best is None:
         return frame + merged, 0
-    return frame[:best] + merged, best_shared
+    out = list(frame[:best])
+    by_place = {}
+    for j, x in best_inserts:
+        by_place.setdefault(j, []).append(x)
+    for j, x in enumerate(merged):
+        out += by_place.get(j, [])
+        out.append(x)
+    return out, best_shared
 
 
 USER_PROFILES = os.path.join(os.path.expanduser("~"), ".appwalk", "profiles")

@@ -685,6 +685,21 @@ the chat (13 and 7 screenshots), no gaps, export check passed: on both phones th
 each exactly as logged and with the right direction, and the date line as other text. The first
 walks found the two faults above (the keyboard, the title bar), now fixed.
 
+**The same two phones, Discord 353.11**, 15 November: a known-data direct-message chat of 50
+numbered texts sent by adb taps, 25 from each phone: 40 taking turns, then 10 in runs of three and
+four from one phone, which Discord shows under one author line. Discord shows every message in one
+column under its author's name, so the transcript gives the author lines and no direction. Walked
+from the chat (12 and 9 screenshots), no gaps, export check passed. On one phone the first transcript
+joined two pairs of screenshots at the wrong place: every message there repeats the same row
+header, author and time lines, the list's top edge had hidden an author and a time on one
+screenshot, and a line-by-line comparison with no gaps then chose the wrong place, so 2 texts were
+missing and 3 were there twice. The join now allows a line to be missing on either side, and keeps
+a line only one screenshot showed where it sat. On both phones the 50 texts are in order, each
+exactly as logged, under the right author. Rebuilt with the new join, 211 of 217 exports on this
+computer gave the same transcript; in the other 6, lines a screenshot showed and the old join left
+out came back, or repeats went away (the Discord walks and an iPhone walk were checked against what
+their screenshots showed).
+
 **The same two phones, Google Messages (SMS)**, 15 November: a known-data chat between them of 40
 numbered texts, sent by adb taps, 20 from each phone, on two builds of the app (April and September
 2025). Walked from the chat (15 and 8 screenshots), no gaps, export check passed: on both phones
@@ -739,7 +754,7 @@ transcript there does not have it; the other phone's does.
   clicks placed in code by view id and position, never by what a message says, Discord's taught
   profile matched the shipped one in every field and WhatsApp's added only its bubble view.
 
-Not tried: any other phone maker or Android version on a real phone, Telegram, a Flutter or game
+Not tried: any other phone maker or Android version on a real phone, a Flutter or game
 engine app, rows that share a title, right-to-left layouts, a list that scrolls sideways.
 
 ## 15. What it does not do
