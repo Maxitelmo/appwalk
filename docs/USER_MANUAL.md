@@ -683,7 +683,9 @@ width, so the side cannot tell the direction, but it ends each one with "Receive
 "Sent at <time>, Seen"; the profile takes the text and the direction from those words. Walked from
 the chat (13 and 7 screenshots), no gaps, export check passed: on both phones the 50 texts in order,
 each exactly as logged and with the right direction, and the date line as other text. The first
-walks found the two faults above (the keyboard, the title bar), now fixed.
+walks found the two faults above (the keyboard, the title bar), now fixed. A later walk of the same chat
+after a made-up picture each way (sent from each phone's gallery) listed both as messages in Telegram's
+own words, "Photo", one sent and one received, on both phones.
 
 **The same two phones, Snapchat 14.32.0.54**, 15 November: a known-data chat of 74 numbered texts sent
 by adb taps (39 from the Galaxy, 35 from the moto) and two made-up pictures, one from each phone's camera roll. Snapchat
@@ -704,7 +706,13 @@ header, author and time lines, the list's top edge had hidden an author and a ti
 screenshot, and a line-by-line comparison with no gaps then chose the wrong place, so 2 texts were
 missing and 3 were there twice. The join now allows a line to be missing on either side, and keeps
 a line only one screenshot showed where it sat. On both phones the 50 texts are in order, each
-exactly as logged, under the right author. Rebuilt with the new join, 211 of 217 exports on this
+exactly as logged, under the right author. A later walk, after a made-up picture each way (shared to Discord
+from each phone's pictures), listed each as a picture line, "image, button, double tap to enlarge",
+under the right author, on both phones. On the Galaxy the first transcript listed one picture twice: it
+was cut by the list's edge on two screenshots that the pictures had shown to overlap, and the two shared
+only the picture and its row line, which scored too low to join. Screenshots shown to overlap are now
+joined at the best place they share a line; rebuilt with that, 222 of 224 exports on this computer gave
+the same transcript, and in the other 2 a line that two screenshots showed came out once instead of twice. Rebuilt with the new join, 211 of 217 exports on this
 computer gave the same transcript; in the other 6, lines a screenshot showed and the old join left
 out came back, or repeats went away (the Discord walks and an iPhone walk were checked against what
 their screenshots showed).

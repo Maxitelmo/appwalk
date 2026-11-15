@@ -590,6 +590,19 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(transcript.classify(mk("OK"), prof)[0], "message")       # capitals, but not the title
         self.assertEqual(transcript.classify(mk("me"), prof)[0], "message")       # not in capitals
 
+    def test_a_shown_overlap_joins_where_only_a_picture_and_its_row_are_shared(self):
+        # As in Discord on a Galaxy A16 5G (15 November 2026): a picture cut by the list's edge on both screenshots.
+        import transcript
+        mk = lambda items: [{"text": t, "rid": "p:id/" + r if r else "", "desc": "", "bounds": (0, i, 9, i + 1), "side": "left"}
+                            for i, (t, r) in enumerate(items)]
+        held = mk([("Samsung, 5:08 PM", ""), ("image", "image"), ("Motto, 5:08 PM", ""), ("image", "image")])
+        new = mk([("Test 550", ""), ("Samsung, 5:08 PM", ""), ("Samsung", "author_name"), ("5:08 PM", "timestamp"), ("image", "image")])
+        merged, shared = transcript.join(list(held), new, "above")
+        self.assertEqual(shared, 0)                                  # not shown to overlap: placed before
+        merged, shared = transcript.join(list(held), new, "above", shown=True)
+        self.assertEqual([x["text"] for x in merged].count("image"), 2)
+        self.assertEqual([x["text"] for x in merged][:5], ["Test 550", "Samsung, 5:08 PM", "Samsung", "5:08 PM", "image"])
+
     def test_repeated_identical_messages_keep_their_count(self):
         import transcript
         mk = lambda texts: [{"text": t, "rid": "x", "desc": "", "bounds": (0, i, 9, i + 1), "side": "left"} for i, t in enumerate(texts)]
