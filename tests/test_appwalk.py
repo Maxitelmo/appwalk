@@ -977,6 +977,10 @@ class FreeBandTests(unittest.TestCase):
                             .replace(b'bounds="[0,243][1080,283]"', b'bounds="[0,0][10,10]"')
                             .replace(b'bounds="[0,1991][1080,2205]"', b'bounds="[0,0][10,10]"'))
         self.assertEqual(appwalk.free_band(bare, P, bare.scroll_container(P)), (0, 2340))
+        # A settled screenshot is judged on the same band: the message box's cursor blinks, the list does not.
+        self.assertEqual(appwalk.settle_bounds(tree, P, box), (0, 283, 1080, 1991))
+        self.assertEqual(appwalk.settle_bounds(bare, P, bare.scroll_container(P)), (0, 0, 1080, 2340))
+        self.assertIsNone(appwalk.settle_bounds(tree, P, None))
 
 
 class PatternDirectionTests(unittest.TestCase):
