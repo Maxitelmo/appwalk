@@ -696,6 +696,13 @@ The pictures have no text or description in the view tree, so they are in the sc
 shows in the transcript as an author line with no message under it. The chat had been left and opened
 again several times before the walk and still held every text.
 
+**The same two phones, LINE 26.17.1**, 16 November: a known-data chat of 20 numbered texts sent by
+adb taps, taking turns, 10 from each phone. LINE names its views, so the profile uses them: the message
+text (`chat_ui_message_text`), times and day lines, and the bubble for the side. Walked from the chat
+(6 and 5 screenshots), no gaps: on both phones the 20 texts and an earlier "Hi" are in order, once
+each, with the right direction; the "Read" receipts are other lines. The chat itself showed no ads;
+LINE's home and chat list do.
+
 **The same two phones, Wire 4.38.1**, 16 November: a known-data chat of 30 numbered texts sent by adb
 taps, taking turns, 15 from each phone. Wire's views carry no ids, so the profile tells messages from
 the rest by what is left: times and days by `time_patterns` ("12:24 AM", "YESTERDAY", "23 MINUTES

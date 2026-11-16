@@ -1,0 +1,11 @@
+{
+  "package": "jp.naver.line.android",
+  "checked_with": "26.17.1 on a Galaxy A16 5G and a moto g play (Android 16, English), 16 November 2026, a known-data chat of 20 numbered texts between the two phones",
+  "message_ids": ["chat_ui_message_text"],
+  "time_ids": ["chat_ui_row_timestamp", "chat_ui_date_indicator_text"],
+  "bubble_ids": ["chat_ui_text_message_balloon_root"],
+  "direction_rules": [
+    {"by": "side", "value": "right", "direction": "sent"},
+    {"by": "side", "value": "left", "direction": "received"}
+  ]
+}
