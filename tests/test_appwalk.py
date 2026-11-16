@@ -1082,6 +1082,17 @@ class TextShiftTests(unittest.TestCase):
         lines = transcript.frame_lines(ET.fromstring(raw), P)
         self.assertEqual([(x["text"], x["sliver"]) for x in lines], [("cut", True), ("whole", False)])
 
+    def test_a_line_moved_partly_off_the_list_agrees_when_cut_at_that_edge(self):
+        # Telegram on a moto g play (16 November 2026): a picture under the one other shared line moved past the
+        # bottom edge and showed there cut; skipped, only one line agreed and the frame was left unjoined.
+        LIST = (0, 0, 720, 1604)
+        box = lambda t, top, bottom: {"text": t, "rid": "", "bounds": (0, top, 720, bottom), "described": False}
+        prev = [box("m500", 0, 92), box("Photo", 92, 724), box("Photo", 724, 1356)]
+        cur = [box("m499", 818, 881), box("m500", 881, 976), box("Photo", 976, 1604)]
+        ts = transcript.text_shift(prev, cur, LIST, "above")
+        self.assertEqual((ts["agree"], ts["disagree"]), (2, 0))
+        self.assertTrue(transcript.text_joins(ts))
+
     def test_one_line_is_not_enough(self):
         ts = transcript.text_shift([self.line("0:07", 300)], [self.line("0:07", 900)], self.LIST, "above")
         self.assertEqual(ts["agree"], 1)
