@@ -300,7 +300,14 @@ def text_shift(prev, cur, list_bounds, reveal, tol=6, ticking=()):
                     continue
                 t, btm = p[1] + d, p[3] + d
                 if top is not None and (t < top or btm > bottom):
-                    continue  # moved off the list, or only partly on it
+                    # Moved partly off the list: it agrees when the new frame shows it cut at that edge, with its
+                    # other edge where the shift puts it (Telegram 13.2.2, moto g play, 16 November 2026: a picture
+                    # cut by the bottom edge was one of the two lines both frames shared; skipped, the frame was
+                    # left unjoined and its lines were listed twice). Missing there, it does not count either way.
+                    if any((btm > bottom and near(t, q[1]) and q[3] >= bottom - 1) or
+                           (t < top and near(btm, q[3]) and q[1] <= top + 1) for q in b.get(k, [])):
+                        agree += 1
+                    continue
                 if any(near(t, q[1]) or near(btm, q[3]) for q in b.get(k, [])):
                     agree += 1
                 else:
