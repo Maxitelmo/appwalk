@@ -1,0 +1,13 @@
+{
+  "package": "com.wire",
+  "checked_with": "4.38.1-52601-prod on a Galaxy A16 5G and a moto g play (Android 16, English), 16 November 2026, a known-data chat of 30 numbered texts between the two phones",
+  "time_patterns": ["\\d{1,2}:\\d{2}\\s*[AP]M", "JUST NOW", "\\d+ MINUTES? AGO", "\\d+ HOURS? AGO", "TODAY", "YESTERDAY",
+                    "(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)"],
+  "ignore_text_prefixes": ["Communication in Wire is always end-to-end encrypted.", "Learn more",
+                           "This conversation now uses the new Messaging Layer Security (MLS) protocol."],
+  "unnamed_message_min_height": 20,
+  "direction_rules": [
+    {"by": "side", "value": "right", "direction": "sent"},
+    {"by": "side", "value": "left", "direction": "received"}
+  ]
+}

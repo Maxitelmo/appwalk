@@ -457,6 +457,10 @@ def classify(line, profile):
     # centred lines, so a message that says "11:14 PM" stays a message.
     if line.get("side") == "across" and any(re.fullmatch(p, line["text"].strip()) for p in profile.get("centred_time_patterns", [])):
         return "time", "", ""
+    # A line whose whole text is a time or a day by the profile's patterns (Wire 4.x: "12:24 AM" under each
+    # message and "YESTERDAY" between days, with no view id to tell them from messages).
+    if any(re.fullmatch(p, line["text"].strip(), re.I) for p in profile.get("time_patterns", [])):
+        return "time", "", ""
     if rid in profile.get("ignore_ids", []) or any(line["text"].startswith(p) for p in profile.get("ignore_text_prefixes", [])):
         return "other", "", ""
     if rid in profile.get("author_ids", []):
@@ -472,8 +476,6 @@ def classify(line, profile):
             return "author", "sent", "the app's own words (the line naming its author)"
         if words.get("others_are_title") and line.get("title_caps"):
             return "author", "received", "the app's own words (the line naming its author)"
-        if any(re.fullmatch(p, text, re.I) for p in profile.get("time_patterns", [])):
-            return "time", "", ""
         if not rid and not line.get("described"):
             return "message", "", ""
     role = "described" if line.get("described") else "message"

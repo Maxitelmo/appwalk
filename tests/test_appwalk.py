@@ -1003,6 +1003,17 @@ class PatternDirectionTests(unittest.TestCase):
                                ("November 15", ("other", ""))])
 
 
+class WireProfileTests(unittest.TestCase):
+    def test_times_notices_and_messages_with_no_ids(self):
+        prof = transcript.load_profile("com.wire")
+        line = lambda t, side, h=49: {"text": t, "rid": "", "side": side, "desc": "", "bounds": (0, 0, 500, h)}
+        self.assertEqual(transcript.classify(line("12:24\u202fAM", "right", 39), prof)[0], "time")
+        self.assertEqual(transcript.classify(line("23 MINUTES AGO", "across", 39), prof)[0], "time")
+        self.assertEqual(transcript.classify(line("Learn more", "left", 135), prof)[0], "other")
+        self.assertEqual(transcript.classify(line("Test 601 delta", "right"), prof)[:2], ("message", "sent"))
+        self.assertEqual(transcript.classify(line("Hi", "left", 29), prof)[:2], ("message", "received"))
+
+
 class TextShiftTests(unittest.TestCase):
     """transcript.text_shift on made-up frames: what two frames' text says about whether they overlap."""
 
