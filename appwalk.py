@@ -308,6 +308,22 @@ def free_band(tree, package, box):
     return top, bottom
 
 
+def settle_bounds(tree, package, box):
+    """The part of the screen a settled screenshot must hold still: the list, less the views of the app that lie
+    over its top or bottom (free_band). Telegram 13.2.2 draws its list behind the title bar and the message box,
+    whose text cursor blinks about every 0.6 s (Galaxy A16 5G, 16 November 2026: a 6-pixel strip at y 2081 to
+    2149 of 2340 changed on 9 of 14 screenshots of a still chat), so three screenshots in a row seldom agreed.
+    None when there is no list (the whole screen is compared)."""
+    if box is None:
+        return None
+    l, t, r, b = box["bounds"]
+    if box.get("node") is not None:
+        ft, fb = free_band(tree, package, box)
+        if fb - ft > (b - t) * 0.4:
+            return (l, ft, r, fb)
+    return (l, t, r, b)
+
+
 def tree_rows(tree, package):
     """Rows of the scrolling list: its direct children that carry some text. The title is the first text."""
     box = tree.scroll_container(package)
@@ -546,15 +562,15 @@ class Walker:
                 return after, None, None, attempt
             again = self.d.screenshot()
             box = after.scroll_container(self.package)
-            self.last_list_bounds = box["bounds"] if box else None
-            if same_area(png, again, box["bounds"] if box else None):
+            self.last_list_bounds = settle_bounds(after, self.package, box)
+            if same_area(png, again, self.last_list_bounds):
                 return after, png, stamp, attempt
             self.sleep(self.settle_s)
         # Never still, but only inside a small box: an animation that does not stop (WhatsApp 2.26.44.90's Meta AI
         # button over its chat list, under 1% of the list, Galaxy A16 5G and moto g play). The list itself is
         # still, so the screenshot is kept as settled and the row says why. A label that changes once and then
         # stops (Signal's floating date) is waited out by the tries above, as before.
-        share = changed_share(png, again, box["bounds"] if box else None) if after is not None else None
+        share = changed_share(png, again, self.last_list_bounds) if after is not None else None
         if share is not None and share < 0.02:
             self.add("system_event", "small_animation_ignored", {"changed_share_of_list": round(share, 4),
                                                                  "why": "only a small part of the list kept changing"})
