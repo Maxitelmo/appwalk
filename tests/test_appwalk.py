@@ -1049,6 +1049,18 @@ class TextShiftTests(unittest.TestCase):
         self.assertEqual(shared, 0)
         self.assertEqual([x["text"] for x in merged].count("Photo"), 2)
 
+    def test_a_cut_line_that_votes_for_two_shifts_takes_the_one_the_other_lines_confirm(self):
+        # Telegram on a Galaxy A16 5G (16 November 2026): two pictures with the same text sat above the one line
+        # found once on each frame, and that line was cut by the bottom edge, so it voted for two shifts. The
+        # smaller was taken, the pictures disagreed, the frame was left unjoined and its lines were listed twice.
+        LIST = (0, 0, 1080, 2340)
+        box = lambda t, top, bottom: {"text": t, "rid": "", "bounds": (0, top, 1080, bottom), "described": False}
+        prev = [box("Photo", 0, 681), box("Photo", 681, 1608), box("m561", 1608, 1771), box("m562", 1771, 1921)]
+        cur = [box("m500", 205, 368), box("Photo", 368, 1295), box("Photo", 1295, 2222), box("m561", 2222, 2340)]
+        ts = transcript.text_shift(prev, cur, LIST, "above")
+        self.assertEqual(ts["shift"], 614)
+        self.assertTrue(transcript.text_joins(ts))
+
     def test_one_line_is_not_enough(self):
         ts = transcript.text_shift([self.line("0:07", 300)], [self.line("0:07", 900)], self.LIST, "above")
         self.assertEqual(ts["agree"], 1)

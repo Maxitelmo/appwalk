@@ -273,11 +273,38 @@ def text_shift(prev, cur, list_bounds, reveal, tol=6, ticking=()):
         # A line cut by the list's edge keeps one edge in place, so either edge can carry the shift.
         votes.append({d for d in (q[1] - p[1], q[3] - p[3]) if d * sign > 1 or 1 < abs(d) <= small})
     cands = sorted({d for v in votes for d in v})
-    best, best_n = None, 0
+    top, bottom = (list_bounds[1], list_bounds[3]) if list_bounds else (None, None)
+
+    def check(d):
+        agree = disagree = 0
+        for k, boxes in a.items():
+            if k in fixed:
+                continue
+            for p in boxes:
+                if k[1] in ticking and not any(near(p[1] + d, q[1]) or near(p[3] + d, q[3]) for q in b.get(k, [])) \
+                        and any(k2[1] == k[1] and ticked(k[0], k2[0]) and any(near(p[1] + d, q[1]) for q in qs)
+                                for k2, qs in b.items()):
+                    continue
+                t, btm = p[1] + d, p[3] + d
+                if top is not None and (t < top or btm > bottom):
+                    continue  # moved off the list, or only partly on it
+                if any(near(t, q[1]) or near(btm, q[3]) for q in b.get(k, [])):
+                    agree += 1
+                else:
+                    disagree += 1
+        return agree, disagree
+
+    # Each shift a line voted for is checked against every line, and the one that puts the most lines in place
+    # wins; votes only break a tie. A line cut by the list's edge votes for two shifts, and when it is the only
+    # line found once on each frame the two tie (Telegram 13.2.2, Galaxy A16 5G and moto g play, 16 November
+    # 2026: two pictures with the same text sat above "Test 561", cut by the bottom edge; the wrong shift of the
+    # two was taken, the pictures disagreed and the frame was left unjoined, so 6 to 13 lines were listed twice).
+    best, best_n, best_ad = None, 0, None
     for d in cands:
         n = sum(1 for v in votes if any(near(d, e) for e in v))
-        if n > best_n:
-            best, best_n = d, n
+        ad = check(d)
+        if best is None or (ad[0] - ad[1], n) > (best_ad[0] - best_ad[1], best_n):
+            best, best_n, best_ad = d, n, ad
     if best is None:
         # Nothing moved: most of the old frame is where it was (a list at its end, read again after a
         # time on it changed: WhatsApp, Pixel 7a, 15 of 22 lines in place). That is the same screen. One
@@ -285,23 +312,7 @@ def text_shift(prev, cur, list_bounds, reveal, tol=6, ticking=()):
         if len(fixed) >= 2 and len(fixed) * 2 >= len(a):
             return {"shift": 0, "agree": len(fixed), "disagree": len(a) - len(fixed), "fixed": len(fixed), "fixed_keys": fixed}
         return {"shift": None, "agree": 0, "disagree": 0, "fixed": len(fixed), "fixed_keys": fixed}
-    top, bottom = (list_bounds[1], list_bounds[3]) if list_bounds else (None, None)
-    agree = disagree = 0
-    for k, boxes in a.items():
-        if k in fixed:
-            continue
-        for p in boxes:
-            if k[1] in ticking and not any(near(p[1] + best, q[1]) or near(p[3] + best, q[3]) for q in b.get(k, [])) \
-                    and any(k2[1] == k[1] and ticked(k[0], k2[0]) and any(near(p[1] + best, q[1]) for q in qs)
-                            for k2, qs in b.items()):
-                continue
-            t, btm = p[1] + best, p[3] + best
-            if top is not None and (t < top or btm > bottom):
-                continue  # moved off the list, or only partly on it
-            if any(near(t, q[1]) or near(btm, q[3]) for q in b.get(k, [])):
-                agree += 1
-            else:
-                disagree += 1
+    agree, disagree = best_ad
     return {"shift": best, "agree": agree, "disagree": disagree, "fixed": len(fixed), "fixed_keys": fixed}
 
 
