@@ -160,6 +160,14 @@ def frame_lines(tree_path, package, profile=None):
                 out.append({"text": n.get("content-desc"), "desc": n.get("content-desc"), "rid": rid, "parent_rid": parent_rid,
                             "bounds": b, "side": side_of(sb, cb), "described": True, "bubble": sb if sb is not b else None})
     out.sort(key=lambda x: (x["bounds"][1], x["bounds"][0]))
+    # A sliver of a row at the list's edge, under 4 px tall, shows nothing to read. Its edge still says where the
+    # row went, so it helps find how far the list moved (text_shift), but it is never listed as a row: it did not
+    # line up with the whole row on the next screenshot and was listed again (Discord 353.11, moto g play, 16
+    # November 2026: a 1 px strip of a row's "<author>, <time>" description; Telegram 13.2.2: a 2 px strip of a
+    # picture listed as a second sent "Photo"). In Google Messages a 1 px strip was one of the two lines that
+    # showed two screenshots overlap.
+    for x in out:
+        x["sliver"] = x["bounds"][3] - x["bounds"][1] < 4
     # A profile can name the shape of a line that holds a message with more around it. Messenger 2026-11
     # (Galaxy A16 5G and moto g play, 15 November 2026) puts each message in one view with no id, whose text
     # is "<first name>, <message>, double tap to see sent/receive date and time, double tap and hold to react
@@ -259,8 +267,13 @@ def text_shift(prev, cur, list_bounds, reveal, tol=6, ticking=()):
     near = lambda u, v: abs(u - v) <= tol
     # Fixed means not moved at all. A list at its end can move by only a few pixels (LinkedIn, Pixel 7a:
     # 18 lines moved 6 px), and those lines did scroll.
-    fixed = {k for k in a.keys() & b.keys()
-             if any(abs(p[1] - q[1]) <= 1 and abs(p[3] - q[3]) <= 1 for p in a[k] for q in b[k])}
+    in_place = {k for k in a.keys() & b.keys()
+                if any(abs(p[1] - q[1]) <= 1 and abs(p[3] - q[3]) <= 1 for p in a[k] for q in b[k])}
+    # Only a line found once on each frame can be a title that stays put. A line that repeats (an author's name
+    # over each message) can sit at the same place on two frames by chance, under different messages, and was
+    # then held once and dropped from the second frame (Discord 353.11, moto g play, 16 November 2026: the
+    # author line over one message, at y 1024 on both screenshots).
+    fixed = {k for k in in_place if len(a[k]) == 1 and len(b[k]) == 1}
     sign = 1 if reveal == "above" else -1
     # A small move the other way is a list settling back at its end (LinkedIn, Pixel 7a: 18 lines 6 px
     # up on a walk that reveals above); the frames then share nearly everything, so it joins too.
@@ -309,8 +322,9 @@ def text_shift(prev, cur, list_bounds, reveal, tol=6, ticking=()):
         # Nothing moved: most of the old frame is where it was (a list at its end, read again after a
         # time on it changed: WhatsApp, Pixel 7a, 15 of 22 lines in place). That is the same screen. One
         # title in place among lines that changed is not.
-        if len(fixed) >= 2 and len(fixed) * 2 >= len(a):
-            return {"shift": 0, "agree": len(fixed), "disagree": len(a) - len(fixed), "fixed": len(fixed), "fixed_keys": fixed}
+        if len(in_place) >= 2 and len(in_place) * 2 >= len(a):
+            return {"shift": 0, "agree": len(in_place), "disagree": len(a) - len(in_place), "fixed": len(in_place),
+                    "fixed_keys": in_place}
         return {"shift": None, "agree": 0, "disagree": 0, "fixed": len(fixed), "fixed_keys": fixed}
     agree, disagree = best_ad
     return {"shift": best, "agree": agree, "disagree": disagree, "fixed": len(fixed), "fixed_keys": fixed}
@@ -580,15 +594,15 @@ def build(export, profile_folder=None):
                 continue
             before = {id(x) for x in merged}
             if prev_frame is None:
-                merged, shared = join(merged, frame, w["reveal"], ticking)
+                merged, shared = join(merged, [x for x in frame if not x.get("sliver")], w["reveal"], ticking)
             else:
                 root = ET.parse(os.path.join(export, "trees", tree)).getroot()
                 _, cb = container(root, package)
                 ts = text_shift(prev_frame, frame, cb, w["reveal"], ticking=ticking)
                 # A line that did not move with the list (a title inside it) is held once, from the first frame.
                 prev_boxes = {(key(x), x["bounds"][1], x["bounds"][3]) for x in prev_frame}
-                kept = frame if ts["shift"] == 0 else \
-                    [x for x in frame if not (key(x) in ts["fixed_keys"] and (key(x), x["bounds"][1], x["bounds"][3]) in prev_boxes)]
+                kept = [x for x in frame if not x.get("sliver") and (ts["shift"] == 0 or not (
+                    key(x) in ts["fixed_keys"] and (key(x), x["bounds"][1], x["bounds"][3]) in prev_boxes))]
                 px = None
                 if not (text_joins(ts) or not frame):
                     px = picture_overlap(os.path.join(export, "screens", os.path.basename(prev_png)),
@@ -608,7 +622,7 @@ def build(export, profile_folder=None):
                     x["joined"] = shared
         for step, frame in set_aside:
             held = {key(x) for x in merged}
-            alone = [x for x in frame if key(x) not in held]
+            alone = [x for x in frame if key(x) not in held and not x.get("sliver")]
             tail = (f". {len(alone)} line(s) seen only on S{step} are listed after this walk's other lines" if alone
                     else ", and every line on it was seen again on the screenshots after it")
             notes.append(f"{w['item'] or '(the screen walked)'}: screenshot S{step} shared nothing with the one before, so "

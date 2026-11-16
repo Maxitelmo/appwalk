@@ -1061,6 +1061,27 @@ class TextShiftTests(unittest.TestCase):
         self.assertEqual(ts["shift"], 614)
         self.assertTrue(transcript.text_joins(ts))
 
+    def test_a_repeated_line_at_the_same_place_by_chance_is_not_a_title(self):
+        # Discord on a moto g play (16 November 2026): an author line over one message sat at the same place on two
+        # screenshots under different messages; held as a title, it was dropped from the second frame.
+        prev = [self.line("Ana", 300), self.line("m3", 350), self.line("Ana", 500), self.line("m4", 550)]
+        cur = [self.line("Ana", 300), self.line("m1", 350), self.line("Ana", 900), self.line("m3", 950),
+               self.line("Ana", 1100), self.line("m4", 1150)]
+        ts = transcript.text_shift(prev, cur, self.LIST, "above")
+        self.assertEqual((ts["shift"], ts["fixed"]), (600, 0))
+        self.assertTrue(transcript.text_joins(ts))
+
+    def test_a_sliver_at_the_edge_is_marked(self):
+        P = "p"
+        raw = (f'<?xml version="1.0"?><hierarchy><node package="{P}" class="androidx.recyclerview.widget.RecyclerView" '
+               f'scrollable="true" bounds="[0,100][1080,2000]">'
+               f'<node package="{P}" class="android.widget.TextView" text="cut" bounds="[0,100][1080,101]" />'
+               f'<node package="{P}" class="android.widget.TextView" text="whole" bounds="[0,200][1080,260]" />'
+               '</node></hierarchy>').encode()
+        import xml.etree.ElementTree as ET
+        lines = transcript.frame_lines(ET.fromstring(raw), P)
+        self.assertEqual([(x["text"], x["sliver"]) for x in lines], [("cut", True), ("whole", False)])
+
     def test_one_line_is_not_enough(self):
         ts = transcript.text_shift([self.line("0:07", 300)], [self.line("0:07", 900)], self.LIST, "above")
         self.assertEqual(ts["agree"], 1)
