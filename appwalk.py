@@ -521,7 +521,6 @@ class Walker:
     def settled_capture_by_pixels(self):
         after = png = stamp = None
         for attempt in range(1, 4):
-            stamp = self.d.stamp()
             png = self.d.screenshot()
             # A list can still be gliding after the swipe. Screenshots are cheap and the tree read is not
             # (on a Pixel 7a 0.3 s against 2.3 s), so wait until two quick screenshots in a row agree with
@@ -529,7 +528,6 @@ class Walker:
             # 0.4 s after the list stopped gliding.
             agreed = 0
             for _ in range(8):
-                quick_stamp = self.d.stamp()
                 quick = self.d.screenshot()
                 if same_area(png, quick, getattr(self, "last_list_bounds", None)):
                     agreed += 1
@@ -537,7 +535,12 @@ class Walker:
                         break
                 else:
                     agreed = 0
-                    stamp, png = quick_stamp, quick
+                    png = quick
+            # The phone's clock is read once, when three screenshots in a row have agreed: the list showed this
+            # picture for that whole time, so the reading is a moment the screenshot shows. Reading it for every
+            # quick screenshot took 14% of a Telegram walk on a Galaxy A16 5G (504 readings for 43 screenshots,
+            # 16 November 2026).
+            stamp = self.d.stamp()
             after = Tree(self.d.tree_raw())
             if not self.in_front(after):
                 return after, None, None, attempt
@@ -610,6 +613,7 @@ class Walker:
         if do_rewind and not self.go_to_far_end():
             return self.finish()
         prev_fp, prev_labels, prev_png, unchanged, fraction = None, None, None, 0, self.fraction
+        joined_run = 0
         prev_lines = None
         prev_tree = None
         while True:
@@ -701,6 +705,14 @@ class Walker:
                 s["stop_reason"] = f"cap of {self.max_screens} screens reached; the end was not confirmed"
                 break
             prev_fp, prev_labels, prev_png, prev_lines = fp, labels, png, lines
+            # After a gap was closed with smaller moves, go back to the usual move once three frames in a row have
+            # joined. Staying small for the rest of the walk took 151 screenshots where 25 did on the other phone
+            # (Google Messages, Galaxy A16 5G, 16 November 2026).
+            if fraction < self.fraction:
+                joined_run = joined_run + 1 if joined is not None and joined["joined"] else 0
+                if joined_run >= 3:
+                    fraction, joined_run = min(self.fraction, fraction * 2), 0
+                    self.add("system_event", "scroll_restored", {"after_screen": s["screens"], "fraction": round(fraction, 3)})
             if not self.scroll(tree, fraction):
                 s["stop_reason"] = "nothing to scroll in this window"
                 break

@@ -743,6 +743,17 @@ transcript there does not have it; the other phone's does.
 **The window**, driven through its own controls against the emulator: 38 of 38 checks on macOS
 (Python 3.12), Ubuntu 26.04 (Python 3.14) and Windows 11 (Python 3.11), the last two on ARM64.
 
+**Walk speed**, Galaxy A16 5G, 16 November 2026, with the time of each step measured. Most of a walk is
+waiting for each screen to settle: screenshots are taken until three in a row agree (0.4 to 0.6 s each),
+then the view tree is read (about 2.4 s). Two changes: the phone's clock is read once per kept
+screenshot instead of once per check (504 readings for 43 screenshots in Telegram before), and after a
+gap is closed with smaller moves the walk goes back to its usual move once three frames in a row have
+joined (before, it stayed small to the end). Telegram: 43 screenshots in 704 s before, 24 in 506 s after,
+the same 135 messages in the same order. Google Messages: 151 screenshots in 1,064 s before, 60 in
+690 s after, nothing missing. Telegram still takes about 15 s a screenshot: something on its screen keeps
+changing for a moment after each move, so it takes more tries to settle. At these rates a thread of 1,000
+messages takes roughly 20 to 50 minutes.
+
 **Other measurements**, on the emulator unless said:
 
 - Google Messages, one conversation of 66 texts (60 received, 6 sent): every text ALEAPP reported for
