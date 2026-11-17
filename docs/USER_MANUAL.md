@@ -456,6 +456,32 @@ so and the call log is still recorded after. Typed by hand on that phone, the co
 problem or invalid MMI code" and no IMEI, so that phone's dialer does not answer `*#06#` at all. On that phone About phone gave both IMEIs. The delete
 key's id is known for the Google dialer and the Samsung dialer.
 
+Some phones refuse every tap, swipe and key sent over adb. A tester found this on a Xiaomi
+25098RA98G (HyperOS, Android 15) with "USB debugging (Security settings)" off: each `input` command
+gave a SecurityException naming INJECT_EVENTS. AppWalk does not change that setting. Before it walks
+About phone it sends one trackball roll of 0 by 0, which moves nothing. If the phone refuses it, a
+chained row says so, and no tap, swipe or key is sent for the rest of the run. About phone is then
+kept as it first shows, one screen, and read when it gives text. What is below that first screen is
+not read. When it gives no IMEI, AppWalk opens the dialer with `*#06#` in the intent instead of
+tapping keys. On that Xiaomi the dialer opened the IMEI dialog by itself. On the other phones the
+tester tried, a Nubia Z2351N and the three above, the code only filled the field, so this is used
+only when input is refused. The dialog is kept as above, cut to its bounds, with the call log
+recorded before and after. It cannot be closed without a tap, so AppWalk brings the launcher to the
+front with an intent, and the dialog may stay open behind it. The dialog can take a moment to fill in,
+so it is read each second, up to eight times, until it shows its OK button and the same IMEIs twice.
+
+Without input AppWalk cannot wake the screen or keep it on. It reads the screen's state from `dumpsys
+power`, which changes nothing, before it reads About phone and again before the dialer. If the screen
+is off, it stops there and the note says so: wake and unlock the phone, then run identify again soon
+after. The tester's Xiaomi turned its screen off 60 seconds after the last touch, and identify took
+about 20 seconds there. "Stay awake" in Developer options or a longer screen timeout would also keep it
+on, but both change the phone under examination, so record it if you use one. The tester ran the
+first version of this path seven times on the Xiaomi. Every export verified and the call log did not
+change. The dialog's IMEIs were read in three runs. In two others the screen was off, and in two with
+the screen on a single reading at 2.5 seconds found none, while readings by hand found both. The
+repeated reading and the screen check came from those runs and are tested with made-up screens. A
+Samsung SM-G990E that takes input read as before.
+
 ## 12. Teach AppWalk an app
 
 Without a profile, the transcript gives every line of an app as plain text: no sent or received, no
@@ -955,6 +981,10 @@ screenshots, and say in `checked_with` what it was checked with.
 - **AppWalk says a different app is in front when you press Start.** A permission prompt, a system
   dialog or another app is on the phone's screen. Choose **Cancel**, clear it on the phone, and start
   again.
+- **The note says the phone refuses input events.** The phone does not let adb tap or swipe, so
+  only the first screen of About phone is kept. Some phones allow input over adb only with an extra
+  developer setting (on Xiaomi phones, "USB debugging (Security settings)"). Whether to change that
+  on the phone under examination is your decision. AppWalk does not change it.
 - **The screen locks during a run.** The waiting dialog comes up. Unlock the phone, bring the screen
   back, and press **Done on the phone**. Set a longer screen timeout before the next run.
 - **The result says an end was not confirmed.** Look at the last screenshots of that conversation in
