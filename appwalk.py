@@ -1448,7 +1448,10 @@ def imei_by_dial_intent(export, dev):
     """For a phone that refuses input events: opens the dialer with *#06# in its intent (each # sent as %23).
     On the Xiaomi in abrignoni/appwalk#53 the Google dialer ran the code and opened the IMEI dialog by
     itself; on a Nubia Z2351N and the three phones in abrignoni/appwalk#24 the code only filled the field,
-    which is why phones that take taps dial it key by key (imei_by_dialer). The dialog cannot be closed
+    which is why phones that take taps dial it key by key (imei_by_dialer). The Google dialer runs the code
+    from the intent only when it is already running: started cold it only fills the field, on the Xiaomi
+    and the Nubia alike (abrignoni/appwalk#53). So the dialer is opened first with tel:0 (opened, not
+    dialled) and HOME brought to the front before the code is passed. The dialog cannot be closed
     without a tap, so the launcher is brought to the front with an intent. Only the dialog is kept, cut to
     its bounds, and the call log's size and newest entry are recorded before and after. Returns a note."""
     log = AppendLog(export, dev)
@@ -1461,6 +1464,10 @@ def imei_by_dial_intent(export, dev):
     before = call_log_state(dev)
     same = None
     try:
+        dev.shell("am start -W -a android.intent.action.DIAL -d 'tel:0'")
+        time.sleep(1)
+        dev.shell("am start -W -a android.intent.action.MAIN -c android.intent.category.HOME")
+        time.sleep(1)
         dev.shell("am start -W -a android.intent.action.DIAL -d 'tel:*%2306%23'")
         # The dialog can take a moment to come up and to fill in each IMEI: on the Xiaomi one reading at 2.5 s
         # found none, or one of two, in 3 of 5 runs, while readings by hand at 1 s and 3 s found both
@@ -1480,6 +1487,7 @@ def imei_by_dial_intent(export, dev):
                 break
             prev = got
         detail = {"how": "the code passed in the dialer's intent: tel:*%2306%23", "typed": "*#06#",
+                  "dialer_opened_first": "tel:0, then HOME, so the dialer is running when the code arrives",
                   "dialog_package": dialog.front_package if dialog else None, "imeis_in_dialog": len(imeis),
                   "readings": readings, "wakefulness_before": state, "call_log_before": before}
         if imeis:
