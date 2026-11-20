@@ -1817,6 +1817,52 @@ class IdentityTests(unittest.TestCase):
                          ["356938035643809", "490154203237518"])
         self.assertTrue(all(ok for _, _, ok in appwalk.verify_export(out)))
 
+    def test_the_dialer_is_running_before_the_code_is_passed(self):
+        # The Google dialer on the Xiaomi and the Nubia in abrignoni/appwalk#53: started cold by the intent it
+        # only fills the field with *#06#; already running, it opens the IMEI dialog.
+        if not appwalk.pixels_available():
+            self.skipTest("needs Pillow")
+        D = "com.google.android.dialer"
+
+        class GoogleDialer(FakePhone):
+            screen, running, shells = "home", False, []
+
+            def shell(self, cmd):
+                self.shells.append(cmd)
+                if "tel:*%2306%23" in cmd:
+                    self.screen = "dialog" if self.running else "field"
+                    self.running = True
+                elif "android.intent.action.DIAL" in cmd:
+                    self.screen, self.running = "field", True
+                elif "category.HOME" in cmd:
+                    self.screen = "home"
+                if "dumpsys power" in cmd:
+                    return "  mWakefulness=Awake\n"
+                return "No result found." if "call_log" in cmd else ""
+
+            def adb(self, *a, **k):
+                if self.screen != "dialog":
+                    return f'<?xml version="1.0"?><hierarchy><node package="{D}" bounds="[0,0][1080,2400]" /></hierarchy>'.encode()
+                return (f'<?xml version="1.0"?><hierarchy><node package="{D}" bounds="[0,136][1080,2337]">'
+                        f'<node package="{D}" resource-id="android:id/content" bounds="[63,346][1017,2127]">'
+                        f'<node package="{D}" text="490154203237518 / 01" bounds="[126,621][561,685]" />'
+                        '<node package="android" resource-id="android:id/button1" text="OK" bounds="[786,1964][954,2090]" />'
+                        '</node></node></hierarchy>').encode()
+        phone = GoogleDialer(count=3)
+        out = run(phone)[0]
+        orig_sleep = appwalk.time.sleep
+        appwalk.time.sleep = lambda s: None
+        try:
+            note = appwalk.imei_by_dial_intent(out, phone)
+        finally:
+            appwalk.time.sleep = orig_sleep
+        self.assertIn("1 IMEI", note)
+        starts = [c for c in phone.shells if "am start" in c]
+        self.assertIn("tel:0", starts[0])
+        self.assertIn("category.HOME", starts[1])
+        self.assertIn("tel:*%2306%23", starts[2])
+        self.assertTrue(all(ok for _, _, ok in appwalk.verify_export(out)))
+
     def test_with_the_screen_off_the_code_is_not_passed_and_the_note_says_why(self):
         class Dozing(FakePhone):
             shells = []
