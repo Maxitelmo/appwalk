@@ -1446,11 +1446,9 @@ def identify_without_input(dev, out, device_label, case=None, say=print):
 
 def imei_by_dial_intent(export, dev):
     """For a phone that refuses input events: opens the dialer with *#06# in its intent (each # sent as %23).
-    On the Xiaomi in abrignoni/appwalk#53 the Google dialer ran the code and opened the IMEI dialog by
-    itself; on a Nubia Z2351N and the three phones in abrignoni/appwalk#24 the code only filled the field,
-    which is why phones that take taps dial it key by key (imei_by_dialer). The Google dialer runs the code
-    from the intent only when it is already running: started cold it only fills the field, on the Xiaomi
-    and the Nubia alike (abrignoni/appwalk#53). So the dialer is opened first with tel:0 (opened, not
+    The Google dialer runs the code from the intent only when it is already running: started cold it only
+    fills the field, on the Xiaomi and the Nubia alike (abrignoni/appwalk#53). The Samsung dialer did not
+    run it either way, which is why phones that take taps dial it key by key (imei_by_dialer). So the dialer is opened first with tel:0 (opened, not
     dialled) and HOME brought to the front before the code is passed. The dialog cannot be closed
     without a tap, so the launcher is brought to the front with an intent. Only the dialog is kept, cut to
     its bounds, and the call log's size and newest entry are recorded before and after. Returns a note."""

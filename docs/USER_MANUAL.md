@@ -462,10 +462,14 @@ gave a SecurityException naming INJECT_EVENTS. AppWalk does not change that sett
 About phone it sends one trackball roll of 0 by 0, which moves nothing. If the phone refuses it, a
 chained row says so, and no tap, swipe or key is sent for the rest of the run. About phone is then
 kept as it first shows, one screen, and read when it gives text. What is below that first screen is
-not read. When it gives no IMEI, AppWalk opens the dialer with `*#06#` in the intent instead of
-tapping keys. On that Xiaomi the dialer opened the IMEI dialog by itself. On the other phones the
-tester tried, a Nubia Z2351N and the three above, the code only filled the field, so this is used
-only when input is refused. The dialog is kept as above, cut to its bounds, with the call log
+not read. When it gives no IMEI, AppWalk passes `*#06#` to the dialer in its intent instead of
+tapping keys. The Google dialer runs a code from the intent only when it is already running: started
+cold, it only fills the field. A tester measured this on a Xiaomi 22101316G (HyperOS 2.0, Android 14)
+and a Nubia Z2351N (Android 13), both with the Google dialer. So AppWalk first opens the dialer with
+`tel:0`, which opens it and dials nothing, brings the launcher to the front, and then passes the
+code. Done that way, the IMEI dialog opened at the first reading on both phones. The Samsung dialer
+on a Samsung SM-G990E did not run the code from the intent, cold or running, which is why phones that
+take taps still dial it key by key. The dialog is kept as above, cut to its bounds, with the call log
 recorded before and after. It cannot be closed without a tap, so AppWalk brings the launcher to the
 front with an intent, and the dialog may stay open behind it. The dialog can take a moment to fill in,
 so it is read each second, up to eight times, until it shows its OK button and the same IMEIs twice.
