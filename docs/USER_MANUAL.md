@@ -432,7 +432,8 @@ Each line goes in `export_check.csv` and the summary in `export_check.txt`, in t
 folder, outside the hash chain and the report. The summary gives AppWalk's version, the SHA-256 of
 `transcript.py` and of the profile, where the profile came from, the zip's SHA-256 and the latest row
 hash, because the result depends on the code and the profile, and a taught profile is outside the
-chain. The check uses the transcript as this AppWalk builds it now. If `transcript.csv` in the export
+chain. The two files are hashed with LF line endings, as the repository holds them, so the same file
+gives the same hash on Windows, where Git checks it out with CRLF, as on macOS and Linux. The check uses the transcript as this AppWalk builds it now. If `transcript.csv` in the export
 differs, it says so and gives the same counts for the file, in `export_check_of_transcript_csv.csv`.
 When they agree, that says nothing about what the walk first wrote: `attach` writes `transcript.csv`
 again with the AppWalk that runs it.

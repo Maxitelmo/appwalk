@@ -2288,6 +2288,20 @@ class ExportCheckTests(unittest.TestCase):
         self.assertTrue(any("says nothing about what the walk first wrote" in x for x in lines))
         self.assertFalse(os.path.exists(os.path.join(out, check_export.FILE_CSV_NAME)))
 
+    def test_code_and_profile_hashes_do_not_depend_on_line_endings(self):
+        # Git on Windows checks files out with CRLF: the same transcript.py must give the hash GitHub's file gives.
+        import check_export
+        import hashlib
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        lf, crlf = os.path.join(d, "lf.py"), os.path.join(d, "crlf.py")
+        write(lf, b"a = 1\nb = 2\n")
+        write(crlf, b"a = 1\r\nb = 2\r\n")
+        self.assertEqual(check_export.sha256_text(lf), check_export.sha256_text(crlf))
+        self.assertEqual(check_export.sha256_text(crlf), hashlib.sha256(b"a = 1\nb = 2\n").hexdigest())
+        digest, _ = check_export.transcript_source()
+        self.assertEqual(digest, hashlib.sha256(read(transcript.__file__).replace(b"\r\n", b"\n")).hexdigest())
+
 
 if __name__ == "__main__":
     unittest.main()
