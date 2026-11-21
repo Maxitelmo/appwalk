@@ -404,6 +404,43 @@ in `--note` how it got there.
 An app's export holds the whole conversation, whatever part of it was walked, and each app has its
 own limits on how much it includes.
 
+### Checking a WhatsApp walk against its Export chat
+
+With WhatsApp's Export chat added to the export, `check-export` finds each line of the chat's text in
+the walk's transcript, in order, and the other way round:
+
+```bash
+python3.12 appwalk.py check-export <export folder> --me "<owner's name as the export spells it>"
+```
+
+`--me` is the walked phone's owner, as the export writes the name. The phone that exported the chat
+and the phone walked may be different ones: on the walked phone, "sent" means that owner's messages.
+The check stops if no sender has that name, unless `--owner-wrote-nothing` says the owner wrote
+nothing in this chat. It reads the zip only if it still matches the SHA-256 in its chained row.
+`--zip`, `--chat` and `--item` name the zip, the chat text in it and the walked row when there is more
+than one.
+
+It counts texts, captions, voice notes, pictures, videos and deleted messages: how many the export
+has, how many were found with the direction the export gives, and how many the walk has that the
+export does not (a voice note written twice is caught that way). A link sent on its own is shown by
+WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System
+lines (group created, the encryption notice) are listed, not counted. When the walk did not confirm
+reaching an end of the list (`--stop-at`, a cap), the export's lines past the first or last one found
+there are "not walked", not "missing". Times are not compared.
+
+Each line goes in `export_check.csv` and the summary in `export_check.txt`, in the export's main
+folder, outside the hash chain and the report. The summary gives AppWalk's version, the SHA-256 of
+`transcript.py` and of the profile, where the profile came from, the zip's SHA-256 and the latest row
+hash, because the result depends on the code and the profile, and a taught profile is outside the
+chain. The check uses the transcript as this AppWalk builds it now. If `transcript.csv` in the export
+differs, it says so and gives the same counts for the file, in `export_check_of_transcript_csv.csv`.
+When they agree, that says nothing about what the walk first wrote: `attach` writes `transcript.csv`
+again with the AppWalk that runs it.
+
+It exits with 0 when everything agrees, 1 when something differs and 2 when it could not check.
+Only Spanish (es-US) exports from Android were tried. Any other format or language (an iPhone's
+export, English) is said and not read, and so is an export made without media.
+
 ### The phone's identity: About phone
 
 **Document About phone**, on the Phone step under This examination, opens Settings > About phone on
@@ -943,13 +980,15 @@ python3 appwalk.py transcript <export folder>
 python3 appwalk.py report <export folder>
 python3 appwalk.py teach <export folder>
 python3 appwalk.py attach <export folder> --file <file>
+python3 appwalk.py check-export <export folder> --me <name>
 python3 appwalk.py identify --serial <adb serial> --out <folder>
 ```
 
 check an export, write its transcript again, write its report again, open the Teach window on it,
-add a file to it, and document the phone's About phone screen (section 11).
+add a file to it, compare a WhatsApp walk with its own Export chat, and document the phone's About
+phone screen (section 11).
 A walk exits with 2 when its result is not complete or not confirmed; `verify` exits with 1 when a
-check fails.
+check fails; `check-export` exits with 1 when something differs and 2 when it could not check.
 
 ## 17. Profiles by hand
 
