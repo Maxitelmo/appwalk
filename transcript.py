@@ -469,6 +469,7 @@ def load_profile(package, folder=None):
             with open(p, encoding="utf-8") as f:
                 prof = json.load(f)
             prof["_from"] = "taught on this computer" if os.path.abspath(d) == os.path.abspath(USER_PROFILES) else "shipped with AppWalk"
+            prof["_path"] = p   # check-export gives the file's SHA-256, since a taught profile is outside the chain
             return prof
     return None
 
