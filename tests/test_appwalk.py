@@ -2182,6 +2182,28 @@ EXPORT_CHAT = (
     "1/12/26, 9:07\u202fa.\u202fm. - Beto: Chau\n")
 
 
+def walk_row(line, role, text, direction="", rid="message_text", desc=""):
+    """A transcript line as transcript.build gives it, the fields check-export reads."""
+    return {"item": "", "line": str(line), "role": role, "direction": direction, "text": text, "app_description": desc,
+            "resource_id": "com.whatsapp:id/" + rid, "screenshot": f"{line:04d}.png"}
+
+
+def walk_of_the_chat(extra=()):
+    """The transcript of a walk of EXPORT_CHAT on Ana's phone, every message found, plus `extra` at the end."""
+    rows = [walk_row(1, "other", "Creaste este grupo", rid="info"),
+            walk_row(2, "message", "Hola", "sent"),
+            walk_row(3, "other", "Beto", rid="name_in_group_tv"),
+            walk_row(4, "message", "Primera línea\nsegunda línea", "received"),
+            walk_row(5, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar"),
+            walk_row(6, "other", "0:07", rid="description"),
+            walk_row(7, "described", "Agrandar foto", "received", rid="image"),
+            walk_row(8, "message", "Una foto", "received", rid="caption"),
+            walk_row(9, "message", "Eliminaste este mensaje.", "sent"),
+            walk_row(10, "message", "Example Domain", "received"),     # the link's preview card
+            walk_row(11, "message", "Chau", "received")]
+    return rows + list(extra)
+
+
 class ExportCheckTests(unittest.TestCase):
     """check-export: a WhatsApp walk against the chat's own Export chat (abrignoni/appwalk#57)."""
 
@@ -2205,6 +2227,53 @@ class ExportCheckTests(unittest.TestCase):
             with self.assertRaises(check_export.CheckStopped) as e:
                 check_export.parse_export(text)
             self.assertIn(said, str(e.exception))
+
+    def test_every_message_found_with_its_direction_passes(self):
+        import check_export
+        rows, counts = check_export.compare(check_export.parse_export(EXPORT_CHAT), walk_of_the_chat(), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual({k: (c["export"], c["found"], c["direction_right"]) for k, c in counts.items() if c["export"]},
+                         {"text": (3, 3, 3), "voice note": (1, 1, 1), "picture": (1, 1, 1), "caption": (1, 1, 1), "deleted": (1, 1, 1)})
+        by_line = {(r["export_line"], r["kind"]): r["result"] for r in rows}
+        self.assertEqual(by_line[(10, "link")], check_export.LINK_CARD)        # its own result, not "missing"
+        self.assertEqual(by_line[(1, "system")], check_export.SYSTEM)
+        # The preview card's line, where the export has the link, is listed as the card and not counted.
+        self.assertIn(("Example Domain", check_export.CARD_LINE), [(r["text"], r["result"]) for r in rows])
+
+    def test_a_voice_note_written_twice_is_caught(self):
+        # #39: the walk wrote one voice note twice; asking only whether each is there would pass it.
+        import check_export
+        twice = walk_of_the_chat()
+        twice.insert(5, walk_row(5, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar"))
+        rows, counts = check_export.compare(check_export.parse_export(EXPORT_CHAT), twice, "Ana")
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual((counts["voice note"]["found"], counts["voice note"]["walk"], counts["voice note"]["only_walk"]), (1, 2, 1))
+        self.assertIn(check_export.ONLY_WALK, [r["result"] for r in rows if r["kind"] == "voice note"])
+
+    def test_a_text_written_twice_and_a_wrong_direction_are_caught(self):
+        import check_export
+        export = check_export.parse_export(EXPORT_CHAT)
+        _, counts = check_export.compare(export, walk_of_the_chat([walk_row(12, "message", "Chau", "received")]), "Ana")
+        self.assertEqual(counts["text"]["only_walk"], 1)
+        self.assertFalse(check_export.passed(counts))
+        wrong = walk_of_the_chat()
+        wrong[1] = walk_row(2, "message", "Hola", "received")
+        rows, counts = check_export.compare(export, wrong, "Ana")
+        self.assertEqual(counts["text"]["direction_right"], 2)
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual([r["direction_agrees"] for r in rows if r["text"] == "Hola"], ["NO"])
+
+    def test_the_part_a_walk_did_not_reach_is_not_walked_not_missing(self):
+        import check_export
+        export = check_export.parse_export(EXPORT_CHAT)
+        newest = walk_of_the_chat()[6:]           # from the picture on: the walk stopped before the oldest messages
+        rows, counts = check_export.compare(export, newest, "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual(counts["text"]["not_walked"], 2)
+        self.assertEqual({r["result"] for r in rows if r["export_line"] in (3, 4, 6)}, {check_export.NOT_WALKED})
+        # With that end confirmed, the same lines are missing.
+        _, counts = check_export.compare(export, newest, "Ana", ends=(False, False))
+        self.assertEqual((counts["text"]["missing"], counts["voice note"]["missing"]), (2, 1))
 
 
 if __name__ == "__main__":
