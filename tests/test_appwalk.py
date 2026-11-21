@@ -2165,5 +2165,47 @@ class WhatsAppThumbTests(unittest.TestCase):
         self.assertEqual(sum(1 for _, (role, _) in self.lines() if role == "described"), 5)
 
 
+# A made-up group chat in the shape of an Android Export chat in Spanish (es-US): a 12-hour time with U+202F
+# inside "a. m.", the U+200E WhatsApp puts before an attachment, a caption on the line after a picture, a
+# message of two lines, a deleted message and a link sent on its own. Names and texts are fictional.
+EXPORT_CHAT = (
+    "\ufeff1/12/26, 9:00\u202fa.\u202fm. - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+    "1/12/26, 9:00\u202fa.\u202fm. - Creaste este grupo\n"
+    "1/12/26, 9:01\u202fa.\u202fm. - Ana: Hola\n"
+    "1/12/26, 9:02\u202fa.\u202fm. - Beto: Primera línea\n"
+    "segunda línea\n"
+    "1/12/26, 9:03\u202fa.\u202fm. - Ana: \u200ePTT-20261201-WA0000.opus (archivo adjunto)\n"
+    "1/12/26, 9:04\u202fa.\u202fm. - Beto: \u200eIMG-20261201-WA0001.jpg (archivo adjunto)\n"
+    "Una foto\n"
+    "1/12/26, 9:05\u202fa.\u202fm. - Ana: Eliminaste este mensaje.\n"
+    "1/12/26, 9:06\u202fa.\u202fm. - Beto: https://example.com/x\n"
+    "1/12/26, 9:07\u202fa.\u202fm. - Beto: Chau\n")
+
+
+class ExportCheckTests(unittest.TestCase):
+    """check-export: a WhatsApp walk against the chat's own Export chat (abrignoni/appwalk#57)."""
+
+    def test_the_export_is_read_line_by_line(self):
+        import check_export
+        lines = check_export.parse_export(EXPORT_CHAT)
+        self.assertEqual([(x["n"], x["kind"], x["author"]) for x in lines], [
+            (1, "system", ""), (2, "system", ""), (3, "text", "Ana"), (4, "text", "Beto"), (6, "voice note", "Ana"),
+            (7, "picture", "Beto"), (7, "caption", "Beto"), (9, "deleted", "Ana"), (10, "link", "Beto"), (11, "text", "Beto")])
+        self.assertEqual(lines[3]["text"], "Primera línea segunda línea")
+        self.assertEqual(lines[4]["file"], "PTT-20261201-WA0000.opus")
+        self.assertEqual(lines[6]["text"], "Una foto")
+
+    def test_a_format_or_language_not_tried_stops_the_check(self):
+        import check_export
+        for text, said in (("[1/12/26, 9:01:05\u202fa.\u202fm.] Ana: Hola\n", "iPhone"),
+                           ("12/1/26, 9:01 AM - Ana: Hi\n12/1/26, 9:02 AM - Ana: \u200ePTT-1.opus (file attached)\n", "English"),
+                           ("1/12/26, 9:01 - Ana: Hola\n", "language"),
+                           ("1/12/26, 9:01 - Ana: <Multimedia omitido>\n1/12/26, 9:02 - Ana: Eliminaste este mensaje.\n", "without media"),
+                           ("Ana: Hola\n", "format")):
+            with self.assertRaises(check_export.CheckStopped) as e:
+                check_export.parse_export(text)
+            self.assertIn(said, str(e.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
