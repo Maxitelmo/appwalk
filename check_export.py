@@ -387,7 +387,16 @@ def transcript_source():
     where = "the copy bundled with this build" if getattr(sys, "frozen", False) else path
     if not os.path.exists(path):
         return None, "not found in this build"
-    return sha256_file(path), where
+    return sha256_text(path), where
+
+
+def sha256_text(path):
+    """The SHA-256 of a text file with its line endings made LF, as the repository holds it. Git on Windows checks
+    files out with CRLF, on this computer and on the Windows runners that make the builds, so the same
+    transcript.py gave one hash there and another on macOS and Linux (21 November 2026); with LF, every copy of
+    the same file gives the hash of the file as GitHub shows it."""
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def csv_text(rows, columns):
@@ -445,10 +454,10 @@ def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, it
 
     profile = transcript.load_profile(package, profile_folder)
     t_hash, t_where = transcript_source()
-    out = [f"AppWalk {appwalk.VERSION}; transcript.py sha256 {t_hash or '-'} ({t_where})"]
+    out = [f"AppWalk {appwalk.VERSION}; transcript.py sha256 {t_hash or '-'} with LF line endings ({t_where})"]
     if profile:
         out.append(f"profile {os.path.basename(profile['_path'])}, {profile.get('_from')}, sha256 "
-                   f"{sha256_file(profile['_path'])}")
+                   f"{sha256_text(profile['_path'])} with LF line endings")
     else:
         out.append(f"no profile for {package}: the transcript gives no message lines, so nothing can be found")
     out.append(f"export chat attachments/{zip_detail['file']}, sha256 {zip_detail['sha256']}, matches its chained row "
