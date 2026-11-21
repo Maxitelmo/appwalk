@@ -420,7 +420,8 @@ nothing in this chat. It reads the zip only if it still matches the SHA-256 in i
 `--zip`, `--chat` and `--item` name the zip, the chat text in it and the walked row when there is more
 than one.
 
-It counts texts, captions, voice notes, pictures, videos and deleted messages: how many the export
+It counts texts, captions, voice notes, pictures, videos, deleted messages and calls (the export
+writes a call, answered or missed, as an empty message from the one who called): how many the export
 has, how many were found with the direction the export gives, and how many the walk has that the
 export does not (a voice note written twice is caught that way). A link sent on its own is shown by
 WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System

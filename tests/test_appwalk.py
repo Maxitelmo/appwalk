@@ -2182,10 +2182,10 @@ EXPORT_CHAT = (
     "1/12/26, 9:07\u202fa.\u202fm. - Beto: Chau\n")
 
 
-def walk_row(line, role, text, direction="", rid="message_text", desc=""):
+def walk_row(line, role, text, direction="", rid="message_text", desc="", side=""):
     """A transcript line as transcript.build gives it, the fields check-export reads."""
     return {"item": "", "line": str(line), "role": role, "direction": direction, "text": text, "app_description": desc,
-            "resource_id": "com.whatsapp:id/" + rid, "screenshot": f"{line:04d}.png"}
+            "resource_id": "com.whatsapp:id/" + rid, "screenshot": f"{line:04d}.png", "side": side}
 
 
 def walk_of_the_chat(extra=()):
@@ -2320,6 +2320,28 @@ class ExportCheckTests(unittest.TestCase):
         with self.assertRaises(check_export.CheckStopped) as e:
             check_export.check(out, "Ana")
         self.assertIn("does not match the SHA-256", str(e.exception))
+
+    def test_a_call_is_an_empty_message_in_the_export_and_a_call_line_in_the_walk(self):
+        # As the Samsung SM-G990E exported a voice call it made and a video call it missed (21 November 2026).
+        import check_export
+        export = check_export.parse_export(
+            "21/11/2026, 19:09 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "21/11/2026, 19:25 - Beto: Chau\n"
+            "21/11/2026, 19:28 - Ana: \n"
+            "21/11/2026, 19:28 - Beto: \n")
+        self.assertEqual([(x["n"], x["kind"], x["author"]) for x in export],
+                         [(1, "system", ""), (2, "text", "Beto"), (3, "call", "Ana"), (4, "call", "Beto")])
+        walk = [walk_row(1, "message", "Chau", "received"),
+                walk_row(2, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(3, "other", "16 s", rid="call_log_subtitle", side="right"),
+                walk_row(4, "other", "Videollamada perdida", rid="call_log_title", side="left"),
+                walk_row(5, "other", "Tocar para volver a llamar", rid="call_log_subtitle", side="left")]
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["export"], counts["call"]["found"], counts["call"]["direction_right"]), (2, 2, 2))
+        # The other way round: the walk on the phone that was called sees the same calls from the other side.
+        _, counts = check_export.compare(export, walk, "Beto")
+        self.assertEqual(counts["call"]["direction_right"], 0)
 
     def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
         import check_export

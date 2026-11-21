@@ -12,6 +12,8 @@ For each line of the export:
 - a picture or a video: is there one, and its caption, when it has one;
 - a deleted message: is there a deleted-message line;
 - a link sent on its own: found, or said to be shown as a preview card (section 14 of the manual);
+- a call, answered or missed, which the export writes as an empty message from the one who called: is there
+  a call line;
 - system lines (group created, the encryption notice) are listed, not counted.
 
 The export holds the whole chat and a walk may not (--stop-at, or an end not confirmed). The log says
@@ -54,9 +56,9 @@ LINK_CARD = "link sent alone: WhatsApp shows a preview card, not the typed link 
 CARD_LINE = "only in the walk, where the export has a link sent alone: taken as its preview card (not counted)"
 OTHER_FILE = "attachment of another kind (not compared)"
 # The kinds that are counted, in the order the summary gives them.
-KINDS = ["text", "caption", "voice note", "picture", "video", "deleted"]
+KINDS = ["text", "caption", "voice note", "picture", "video", "deleted", "call"]
 PLURAL = {"text": "texts", "caption": "captions", "voice note": "voice notes", "picture": "pictures", "video": "videos",
-          "deleted": "deleted messages"}
+          "deleted": "deleted messages", "call": "calls"}
 
 # The line that starts a message in an Android export, once odd spaces are plain ones: "14/11/2026, 03:22 - "
 # (24 hours, Samsung SM-G990E, es-US) or "14/11/26, 3:22 a. m. - " (12 hours). What follows is "Name: text"
@@ -127,6 +129,11 @@ def parse_export(text):
         if m:
             rest = m.group(7)
             author, sep, body = rest.partition(": ")
+            if not sep and rest.endswith(":"):
+                # A message with nothing after the name: how the export writes a call, answered or missed, from
+                # the one who called (Samsung SM-G990E and Xiaomi 22101316G, WhatsApp 2.26.45.99, 21 November
+                # 2026: "21/11/2026, 19:28 - Maxi: "). The space after the colon was stripped with the line's end.
+                author, sep, body = rest[:-1], ":", ""
             messages.append({"n": n, "author": author.strip() if sep else "", "body": body if sep else rest})
         elif messages:
             messages[-1]["body"] += "\n" + line
@@ -136,6 +143,9 @@ def parse_export(text):
         body = "\n".join(x.strip() for x in msg["body"].replace("\u200e", "").split("\n")).strip()
         if not author:
             out.append({"n": n, "author": "", "kind": "system", "text": plain(body), "file": ""})
+            continue
+        if not plain(body):
+            out.append({"n": n, "author": author, "kind": "call", "text": "", "file": ""})
             continue
         first_line, _, more = body.partition("\n")
         att = ATTACHED.match(plain(first_line))
@@ -165,6 +175,10 @@ def walk_kind(row):
     rid = (row.get("resource_id") or "").split(":id/")[-1]
     role, text = row.get("role"), plain(row.get("text"))
     direction = row.get("direction") or ""
+    if rid == "call_log_title":
+        # A call is a line of its own in the chat ("Llamada", "Videollamada perdida"), which the profile leaves as
+        # other text. Who called is the side it sits on, as for a message.
+        return "call", direction or {"right": "sent", "left": "received"}.get(row.get("side") or "", "")
     if role not in ("message", "described"):
         return None
     if text in (DELETED_OWN, DELETED_OTHERS):
@@ -180,7 +194,7 @@ def walk_kind(row):
 
 def key(kind, text):
     """What two lines must share to be the same message: the text for text, a caption, a link and a large
-    emoji; the kind alone for a voice note, a picture, a video or a deleted message."""
+    emoji; the kind alone for a voice note, a picture, a video, a deleted message or a call."""
     if kind in ("text", "caption", "link", "described"):
         return ("text", plain(text))
     return (kind,)
