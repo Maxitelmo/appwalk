@@ -29,11 +29,24 @@ other format or language stops the check and says so. The result is kept out of 
 report, in export_check.csv and export_check.txt in the export's main folder (a file in attachments/
 would make verify fail).
 """
+import csv
 import difflib
+import hashlib
+import io
 import json
 import os
 import re
+import sys
 import unicodedata
+import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import transcript  # noqa: E402
+
+WHATSAPP = "com.whatsapp"
+CSV_NAME, TXT_NAME, FILE_CSV_NAME = "export_check.csv", "export_check.txt", "export_check_of_transcript_csv.csv"
+COLUMNS = ["export_line", "kind", "author", "direction_by_export", "text", "result", "walk_line", "walk_direction",
+           "direction_agrees", "screenshot", "note"]
 
 FOUND, MISSING, NOT_WALKED, ONLY_WALK = "found", "missing", "not walked", "only in the walk"
 SYSTEM = "system line (not counted)"
@@ -66,6 +79,14 @@ WALK_IDS = {"audio_seekbar": "voice note", "image": "picture", "video_container"
 
 class CheckStopped(Exception):
     """The check cannot be made: the reason is said, and nothing is written."""
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def plain(text):
@@ -308,3 +329,163 @@ def count_lines(counts):
         ok = c["missing"] == 0 and c["only_walk"] == 0 and c["direction_right"] + c["no_direction"] == c["found"]
         out.append((ok, text))
     return out
+
+
+# ---- The export folder ----
+
+
+def chain_rows(export):
+    with open(os.path.join(export, "actions.jsonl"), encoding="utf-8") as f:
+        return [json.loads(x) for x in f if x.strip()]
+
+
+def attached_zip(export, rows, name=None):
+    """The attached zip to read and its chained row, checked against the SHA-256 in that row."""
+    import appwalk
+    ok, msg, _ = appwalk.verify_chain(rows)
+    if not ok:
+        raise CheckStopped(f"the hash chain is not intact ({msg}); run verify")
+    attached = [(r, json.loads(r["detail"])) for r in rows if r["action"] == "file_attached"]
+    zips = [(r, d) for r, d in attached if d.get("zip_members") is not None]
+    if name:
+        zips = [(r, d) for r, d in zips if d["file"] == name]
+        if not zips:
+            raise CheckStopped(f"no zip named {name!r} was attached to this export")
+    if not zips:
+        raise CheckStopped("no zip was attached to this export; add WhatsApp's Export chat with attach first")
+    if len(zips) > 1:
+        raise CheckStopped("more than one zip is attached; say which with --zip: " + ", ".join(d["file"] for _, d in zips))
+    row, d = zips[0]
+    path = os.path.join(export, "attachments", d["file"])
+    if not os.path.exists(path):
+        raise CheckStopped(f"attachments/{d['file']} is missing")
+    got = sha256_file(path)
+    if got != d["sha256"]:
+        raise CheckStopped(f"attachments/{d['file']} does not match the SHA-256 in its chained row (seq {row['seq']}); "
+                           "it was not read")
+    return path, row, d
+
+
+def chat_text(zip_path, chat=None):
+    with zipfile.ZipFile(zip_path) as z:
+        texts = [n for n in z.namelist() if n.lower().endswith(".txt")]
+        if chat:
+            texts = [n for n in texts if n == chat]
+            if not texts:
+                raise CheckStopped(f"the zip holds no {chat!r}")
+        if not texts:
+            raise CheckStopped("the zip holds no chat text (.txt)")
+        if len(texts) > 1:
+            raise CheckStopped("the zip holds more than one chat text; say which with --chat: " + ", ".join(texts))
+        return texts[0], z.read(texts[0]).decode("utf-8-sig")
+
+
+def transcript_source():
+    """The transcript.py this check ran with, its SHA-256, and where it is. A ready-made build carries a copy of
+    the file beside its code (devtools/build_binaries.py), the one it was built from."""
+    path = os.path.join(os.path.dirname(os.path.abspath(transcript.__file__)), "transcript.py")
+    where = "the copy bundled with this build" if getattr(sys, "frozen", False) else path
+    if not os.path.exists(path):
+        return None, "not found in this build"
+    return sha256_file(path), where
+
+
+def csv_text(rows, columns):
+    out = io.StringIO(newline="")
+    w = csv.DictWriter(out, fieldnames=columns)
+    w.writeheader()
+    w.writerows(rows)
+    return out.getvalue()
+
+
+def write_rows(path, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        f.write(csv_text(rows, COLUMNS))
+
+
+def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, item=None, profile_folder=None):
+    """Runs the check and writes its files. Returns (ok, lines): the summary, as it is printed."""
+    import appwalk
+    if not os.path.exists(os.path.join(export, "manifest.json")):
+        raise CheckStopped(f"{export} is not a finished AppWalk export: it has no manifest.json")
+    with open(os.path.join(export, "manifest.json"), encoding="utf-8") as f:
+        manifest = json.load(f)
+    package = manifest["apps_under_test"][0]["package"]
+    if package != WHATSAPP:
+        raise CheckStopped(f"this export walked {package}; the check reads WhatsApp exports only")
+    rows = chain_rows(export)
+    zip_path, zip_row, zip_detail = attached_zip(export, rows, zip_name)
+    chat_name, text = chat_text(zip_path, chat)
+    lines = parse_export(text)
+    senders = []
+    for x in lines:
+        if x["author"] and x["author"] not in senders:
+            senders.append(x["author"])
+    if me not in senders and not owner_wrote_nothing:
+        raise CheckStopped(f"no sender in the export is named {me!r}; the senders are: " + ", ".join(senders)
+                           + ". Give --me as the export spells the walked phone's owner, or --owner-wrote-nothing "
+                             "if the owner wrote nothing in this chat")
+    built, _notes, _ = transcript.build(export, profile_folder)
+    items = []
+    for r in built:
+        if r["item"] not in items:
+            items.append(r["item"])
+    if item is None:
+        if len(items) > 1:
+            raise CheckStopped("the transcript has more than one walked item; say which with --item: "
+                               + ", ".join(repr(i) for i in items))
+        item = items[0] if items else ""
+    elif item not in items:
+        raise CheckStopped(f"the transcript has no item {item!r}; it has: " + ", ".join(repr(i) for i in items))
+    ends = walked_ends(export, item)
+    as_text = [{k: "" if v is None else str(v) for k, v in r.items()} for r in built]
+    result, counts = compare(lines, [r for r in as_text if r["item"] == item], me, ends)
+    ok = passed(counts)
+    write_rows(os.path.join(export, CSV_NAME), result)
+
+    profile = transcript.load_profile(package, profile_folder)
+    t_hash, t_where = transcript_source()
+    out = [f"AppWalk {appwalk.VERSION}; transcript.py sha256 {t_hash or '-'} ({t_where})"]
+    if profile:
+        out.append(f"profile {os.path.basename(profile['_path'])}, {profile.get('_from')}, sha256 "
+                   f"{sha256_file(profile['_path'])}")
+    else:
+        out.append(f"no profile for {package}: the transcript gives no message lines, so nothing can be found")
+    out.append(f"export chat attachments/{zip_detail['file']}, sha256 {zip_detail['sha256']}, matches its chained row "
+               f"(seq {zip_row['seq']}); chat text {chat_name}")
+    out.append(f"latest row hash {rows[-1]['row_hash']}")
+    out.append(f"walked phone's owner as the export spells it: {me}" + ("" if me in senders else
+               " (not a sender: the examiner says the owner wrote nothing in this chat)"))
+    out.append(f"item: {item!r}" if item else "item: the screen walked")
+    unsure = [w for w, u in zip(("oldest", "newest"), ends) if u]
+    if unsure:
+        out.append("the walk did not confirm reaching the " + " and the ".join(unsure) + " end of the list: export "
+                   "lines past the first or last one found there are counted as not walked")
+    system = sum(1 for x in lines if x["kind"] == "system")
+    other = sum(1 for x in lines if x["kind"] == "attachment")
+    links = sum(1 for x in lines if x["kind"] == "link")
+    out.append(f"{len({x['n'] for x in lines if x['kind'] != 'system'})} messages in the export, {system} system line(s)"
+               + (f", {links} link(s) sent alone" if links else "") + (f", {other} other attachment(s) not compared" if other else ""))
+    out += [("ok      " if good else "WARNING ") + t for good, t in count_lines(counts)]
+
+    path = os.path.join(export, "transcript.csv")
+    if not os.path.exists(path):
+        out.append("transcript.csv: not in the export")
+    else:
+        with open(path, encoding="utf-8", newline="") as f:
+            on_disk = f.read()
+        if on_disk == csv_text(built, transcript.COLUMNS):
+            out.append("transcript.csv: the same text as the transcript this AppWalk builds now. That says nothing "
+                       "about what the walk first wrote: attach writes transcript.csv again")
+        else:
+            file_rows = [r for r in csv.DictReader(io.StringIO(on_disk)) if r.get("item", "") == item]
+            f_result, f_counts = compare(lines, file_rows, me, ends)
+            write_rows(os.path.join(export, FILE_CSV_NAME), f_result)
+            out.append(f"transcript.csv DIFFERS from the transcript this AppWalk builds now; the same counts on the "
+                       f"file ({FILE_CSV_NAME}):")
+            out += [("  ok      " if good else "  WARNING ") + t for good, t in count_lines(f_counts)]
+            ok = ok and passed(f_counts)
+    out.append(f"export check: {'PASS' if ok else 'DIFFERENCES'}; each line in {CSV_NAME}")
+    with open(os.path.join(export, TXT_NAME), "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    return ok, out

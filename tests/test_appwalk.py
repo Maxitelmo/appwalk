@@ -2228,6 +2228,66 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(export, newest, "Ana", ends=(False, False))
         self.assertEqual((counts["text"]["missing"], counts["voice note"]["missing"]), (2, 1))
 
+    def export_with_chat(self):
+        import zipfile
+        out = run(FakePhone(count=12))[0]
+        m = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8"))
+        m["apps_under_test"][0]["package"] = "com.whatsapp"
+        with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        z = os.path.join(tempfile.mkdtemp(), "Chat de WhatsApp con Grupo.zip")
+        self.addCleanup(shutil.rmtree, os.path.dirname(z))
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("Chat de WhatsApp con Grupo.txt", EXPORT_CHAT.encode("utf-8"))
+            f.writestr("PTT-20261201-WA0000.opus", b"\x00" * 300)
+        appwalk.attach_file(out, local_path=z, note="made up")
+        return out
+
+    def test_the_command_checks_the_zip_its_sender_and_the_transcript_file(self):
+        import check_export
+        from unittest import mock
+        out = self.export_with_chat()
+        with mock.patch.object(transcript, "build", lambda export, folder=None: (walk_of_the_chat(), [], {})):
+            with self.assertRaises(check_export.CheckStopped) as e:
+                check_export.check(out, "Carla")
+            self.assertIn("Ana, Beto", str(e.exception))
+            # The owner wrote nothing: every message is received, so Ana's are in the wrong direction.
+            ok, lines = check_export.check(out, "Carla", owner_wrote_nothing=True)
+            self.assertFalse(ok)
+            ok, lines = check_export.check(out, "Ana")
+        # The transcript.csv on disk is the fake phone's, not this one: it is said, and its counts given too.
+        self.assertTrue(any("DIFFERS" in x for x in lines), lines)
+        self.assertFalse(ok)
+        self.assertTrue(lines[-1].startswith("export check: DIFFERENCES"))
+        summary = "\n".join(lines)
+        for want in ("transcript.py sha256", "profile com.whatsapp.json", "Chat de WhatsApp con Grupo.zip, sha256",
+                     "latest row hash", "texts: 3 in the export, 3 found (3 with the direction the export gives)"):
+            self.assertIn(want, summary)
+        for name in (check_export.CSV_NAME, check_export.TXT_NAME, check_export.FILE_CSV_NAME):
+            self.assertTrue(os.path.exists(os.path.join(out, name)), name)
+        # Its files are in the export's main folder, so the export still checks.
+        self.assertTrue(all(ok for _, _, ok in appwalk.verify_export(out)))
+        # A zip that no longer matches its chained row is not read.
+        with open(os.path.join(out, "attachments", "Chat de WhatsApp con Grupo.zip"), "ab") as f:
+            f.write(b"x")
+        with self.assertRaises(check_export.CheckStopped) as e:
+            check_export.check(out, "Ana")
+        self.assertIn("does not match the SHA-256", str(e.exception))
+
+    def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
+        import check_export
+        out = self.export_with_chat()
+        rows = walk_of_the_chat()
+        with open(os.path.join(out, "transcript.csv"), "w", newline="", encoding="utf-8") as f:
+            f.write(check_export.csv_text([{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows], transcript.COLUMNS))
+        from unittest import mock
+        built = [{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows]
+        with mock.patch.object(transcript, "build", lambda export, folder=None: (built, [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        self.assertTrue(ok, lines)
+        self.assertTrue(any("says nothing about what the walk first wrote" in x for x in lines))
+        self.assertFalse(os.path.exists(os.path.join(out, check_export.FILE_CSV_NAME)))
+
 
 if __name__ == "__main__":
     unittest.main()
