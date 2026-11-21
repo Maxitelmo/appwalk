@@ -254,9 +254,17 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
     # so the walk has the card's lines where the export has the link. The walk's lines that no export line
     # took, between the messages found just before and just after such a link, are taken as that card.
+    def not_walked(i):
+        """Past the first or last line found, at an end of the list the walk did not confirm reaching."""
+        if first is None:
+            return oldest_unsure or newest_unsure
+        return (i < first and oldest_unsure) or (i > last and newest_unsure)
+
+    # A link in the part that was not walked has no card in the walk either (a walk with --stop-at on a Samsung
+    # SM-G990E, 21 November 2026, called such a link's result a preview card).
     card = set()
     for i, x in enumerate(ex):
-        if x["kind"] != "link" or i in pairs:
+        if x["kind"] != "link" or i in pairs or not_walked(i):
             continue
         before = max((pairs[p] for p in pairs if p < i), default=-1)
         after = min((pairs[q] for q in pairs if q > i), default=len(wk))
@@ -290,14 +298,13 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                     c["found"] += 1
                     c["direction_right"] += direction == by_export
                     c["no_direction"] += not direction
-            elif x["kind"] == "link":
-                row["result"] = LINK_CARD
-            elif (first is None and (oldest_unsure or newest_unsure)) or (first is not None and (
-                    (i < first and oldest_unsure) or (i > last and newest_unsure))):
+            elif not_walked(i):
                 row["result"] = NOT_WALKED
                 row["note"] = "past the end of the list the walk did not confirm reaching"
                 if c is not None:
                     c["not_walked"] += 1
+            elif x["kind"] == "link":
+                row["result"] = LINK_CARD
             else:
                 row["result"] = MISSING
                 if c is not None:

@@ -2275,6 +2275,27 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(export, newest, "Ana", ends=(False, False))
         self.assertEqual((counts["text"]["missing"], counts["voice note"]["missing"]), (2, 1))
 
+    def test_a_link_the_walk_did_not_reach_is_not_walked_and_has_no_card(self):
+        # As a walk with --stop-at on the Samsung SM-G990E (21 November 2026): the link was in the part not walked,
+        # and its result said it was shown as a preview card.
+        import check_export
+        export = check_export.parse_export(
+            "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "1/12/26, 9:01 - Ana: Hola\n"
+            "1/12/26, 9:02 - Beto: https://example.com/x\n"
+            "1/12/26, 9:03 - Beto: Chau\n")
+        walk = [walk_row(1, "message", "a line the export does not have", "received"),
+                walk_row(2, "message", "Chau", "received")]
+        rows, _ = check_export.compare(export, walk, "Ana", ends=(True, False))
+        by_text = {r["text"]: r["result"] for r in rows}
+        self.assertEqual(by_text["https://example.com/x"], check_export.NOT_WALKED)
+        self.assertEqual(by_text["a line the export does not have"], check_export.ONLY_WALK)   # not taken as a card
+        # Inside the part walked, the link keeps its own result and the lines around it are its card.
+        rows, _ = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")] + walk, "Ana")
+        by_text = {r["text"]: r["result"] for r in rows}
+        self.assertEqual(by_text["https://example.com/x"], check_export.LINK_CARD)
+        self.assertEqual(by_text["a line the export does not have"], check_export.CARD_LINE)
+
     def export_with_chat(self):
         import zipfile
         out = run(FakePhone(count=12))[0]
