@@ -29,8 +29,21 @@ other format or language stops the check and says so. The result is kept out of 
 report, in export_check.csv and export_check.txt in the export's main folder (a file in attachments/
 would make verify fail).
 """
+import difflib
+import json
+import os
 import re
 import unicodedata
+
+FOUND, MISSING, NOT_WALKED, ONLY_WALK = "found", "missing", "not walked", "only in the walk"
+SYSTEM = "system line (not counted)"
+LINK_CARD = "link sent alone: WhatsApp shows a preview card, not the typed link (not counted)"
+CARD_LINE = "only in the walk, where the export has a link sent alone: taken as its preview card (not counted)"
+OTHER_FILE = "attachment of another kind (not compared)"
+# The kinds that are counted, in the order the summary gives them.
+KINDS = ["text", "caption", "voice note", "picture", "video", "deleted"]
+PLURAL = {"text": "texts", "caption": "captions", "voice note": "voice notes", "picture": "pictures", "video": "videos",
+          "deleted": "deleted messages"}
 
 # The line that starts a message in an Android export, once odd spaces are plain ones: "14/11/2026, 03:22 - "
 # (24 hours, Samsung SM-G990E, es-US) or "14/11/26, 3:22 a. m. - " (12 hours). What follows is "Name: text"
@@ -47,6 +60,8 @@ SPANISH = ("(archivo adjunto)", DELETED_OWN, DELETED_OTHERS, "<Multimedia omitid
            "Los mensajes y las llamadas están cifrados de extremo a extremo", "Creaste este grupo", "te añadió")
 ENGLISH = ("(file attached)", "<Media omitted>", "Messages and calls are end-to-end encrypted", "You deleted this message",
            "This message was deleted", "You created group")
+# The view ids of WhatsApp's own items in a transcript line (profiles/com.whatsapp.json), whatever the language.
+WALK_IDS = {"audio_seekbar": "voice note", "image": "picture", "video_container": "video", "caption": "caption"}
 
 
 class CheckStopped(Exception):
@@ -117,4 +132,179 @@ def parse_export(text):
             out.append({"n": n, "author": author, "kind": "link", "text": plain(body), "file": ""})
         else:
             out.append({"n": n, "author": author, "kind": "text", "text": plain(body), "file": ""})
+    return out
+
+
+# ---- The walk ----
+
+
+def walk_kind(row):
+    """What a transcript line is, for this check: a kind and its direction, or None for a line that is not a
+    message (a time, an author's name, a quoted message, a date)."""
+    rid = (row.get("resource_id") or "").split(":id/")[-1]
+    role, text = row.get("role"), plain(row.get("text"))
+    direction = row.get("direction") or ""
+    if role not in ("message", "described"):
+        return None
+    if text in (DELETED_OWN, DELETED_OTHERS):
+        # The walk's own words say whose it was, as on the screen: "Eliminaste" on the phone that deleted it.
+        return "deleted", direction or ("sent" if text == DELETED_OWN else "received")
+    if rid in WALK_IDS and (role == "described" or rid == "caption"):
+        return WALK_IDS[rid], direction
+    if role == "message":
+        return "text", direction
+    # A message of one emoji is drawn large and described, not written (the 👍 of the known-data chat).
+    return "described", direction
+
+
+def key(kind, text):
+    """What two lines must share to be the same message: the text for text, a caption, a link and a large
+    emoji; the kind alone for a voice note, a picture, a video or a deleted message."""
+    if kind in ("text", "caption", "link", "described"):
+        return ("text", plain(text))
+    return (kind,)
+
+
+def walked_ends(export, item):
+    """(oldest_unsure, newest_unsure): which end of the list the walks of this item did not confirm reaching.
+    A walk with reveal "above" goes up to the oldest message, after a rewind to the newest; "below" the other
+    way. A stop at --stop-at, a cap, or an end not confirmed leaves its end unsure, as does --no-rewind."""
+    oldest = newest = False
+    seen = False
+    start = None
+    with open(os.path.join(export, "actions.jsonl"), encoding="utf-8") as f:
+        for raw in f:
+            r = json.loads(raw)
+            if r["action"] not in ("walk_start", "walk_stop"):
+                continue
+            d = json.loads(r["detail"]) if r.get("detail") else {}
+            if (d.get("item") or "") != item:
+                continue
+            if r["action"] == "walk_start":
+                start = d
+                continue
+            seen = True
+            start = start or {}
+            walked_to_end = d.get("end_confirmed") is True
+            rewound = bool(start.get("rewind", True)) and d.get("rewind_end_confirmed") is True
+            if start.get("reveal", "above") == "above":
+                oldest, newest = oldest or not walked_to_end, newest or not rewound
+            else:
+                oldest, newest = oldest or not rewound, newest or not walked_to_end
+            start = None
+    if not seen:
+        return True, True
+    return oldest, newest
+
+
+def compare(export_lines, walk_rows, me, ends=(False, False)):
+    """Rows for export_check.csv and counts per kind. The export's lines and the transcript's are lined up in
+    order (difflib, without its junk rule: five voice notes look alike and must all count)."""
+    oldest_unsure, newest_unsure = ends
+    ex = [x for x in export_lines if x["kind"] not in ("system", "attachment")]
+    wk = []
+    for r in walk_rows:
+        k = walk_kind(r)
+        if k:
+            wk.append((r, k[0], k[1]))
+    a = [key(x["kind"], x["text"]) for x in ex]
+    b = [key(kind, r.get("text")) for r, kind, _ in wk]
+    pairs = {}
+    for block in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
+        for i in range(block.size):
+            pairs[block.a + i] = block.b + i
+    first = min(pairs) if pairs else None
+    last = max(pairs) if pairs else None
+    used = set(pairs.values())
+    # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
+    # so the walk has the card's lines where the export has the link. The walk's lines that no export line
+    # took, between the messages found just before and just after such a link, are taken as that card.
+    card = set()
+    for i, x in enumerate(ex):
+        if x["kind"] != "link" or i in pairs:
+            continue
+        before = max((pairs[p] for p in pairs if p < i), default=-1)
+        after = min((pairs[q] for q in pairs if q > i), default=len(wk))
+        card |= {j for j in range(before + 1, after) if j not in used}
+    found_at = {id(x): i for i, x in enumerate(ex)}
+    rows, counts = [], {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0,
+                            "missing": 0, "walk": 0, "only_walk": 0} for k in KINDS}
+    for x in export_lines:
+        by_export = ("sent" if x["author"] == me else "received") if x["author"] else ""
+        row = {"export_line": x["n"], "kind": x["kind"], "author": x["author"], "direction_by_export": by_export,
+               "text": x["text"], "result": "", "walk_line": "", "walk_direction": "", "direction_agrees": "",
+               "screenshot": "", "note": ""}
+        if x["kind"] == "system":
+            row["result"] = SYSTEM
+        elif x["kind"] == "attachment":
+            row["result"] = OTHER_FILE
+        else:
+            i = found_at[id(x)]
+            c = counts.get(x["kind"])
+            if c is not None:
+                c["export"] += 1
+            if i in pairs:
+                r, _, direction = wk[pairs[i]]
+                row.update(result=FOUND, walk_line=r.get("line", ""), walk_direction=direction,
+                           screenshot=r.get("screenshot", ""))
+                if not direction:
+                    row["direction_agrees"] = "no direction in the walk"
+                else:
+                    row["direction_agrees"] = "yes" if direction == by_export else "NO"
+                if c is not None:
+                    c["found"] += 1
+                    c["direction_right"] += direction == by_export
+                    c["no_direction"] += not direction
+            elif x["kind"] == "link":
+                row["result"] = LINK_CARD
+            elif (first is None and (oldest_unsure or newest_unsure)) or (first is not None and (
+                    (i < first and oldest_unsure) or (i > last and newest_unsure))):
+                row["result"] = NOT_WALKED
+                row["note"] = "past the end of the list the walk did not confirm reaching"
+                if c is not None:
+                    c["not_walked"] += 1
+            else:
+                row["result"] = MISSING
+                if c is not None:
+                    c["missing"] += 1
+        rows.append(row)
+    for j, (r, kind, direction) in enumerate(wk):
+        if j in used:
+            continue
+        c = counts.get(kind)
+        if c is not None and j not in card:
+            c["only_walk"] += 1
+        rows.append({"export_line": "", "kind": kind, "author": "", "direction_by_export": "", "text": plain(r.get("text")),
+                     "result": CARD_LINE if j in card else ONLY_WALK, "walk_line": r.get("line", ""),
+                     "walk_direction": direction, "direction_agrees": "", "screenshot": r.get("screenshot", ""), "note": ""})
+    # A walk line found for an export line counts as the export's kind (a large emoji is described, not
+    # written, and is still a text); one found for none counts as its own kind.
+    for c in counts.values():
+        c["walk"] = c["found"] + c["only_walk"]
+    return rows, counts
+
+
+def passed(counts):
+    return all(c["missing"] == 0 and c["only_walk"] == 0 and c["direction_right"] + c["no_direction"] == c["found"]
+               for c in counts.values())
+
+
+def count_lines(counts):
+    """One line per kind in the export or the walk, as verify prints them: (ok, text)."""
+    out = []
+    for kind in KINDS:
+        c = counts[kind]
+        if not (c["export"] or c["walk"]):
+            continue
+        text = f"{PLURAL[kind]}: {c['export']} in the export, {c['found']} found"
+        if c["found"]:
+            text += f" ({c['direction_right']} with the direction the export gives"
+            text += f", {c['no_direction']} with none in the walk)" if c["no_direction"] else ")"
+        if c["not_walked"]:
+            text += f", {c['not_walked']} not walked"
+        if c["missing"]:
+            text += f", {c['missing']} MISSING"
+        text += f"; {c['walk']} in the walk" + (f", {c['only_walk']} of them NOT in the export" if c["only_walk"] else "")
+        ok = c["missing"] == 0 and c["only_walk"] == 0 and c["direction_right"] + c["no_direction"] == c["found"]
+        out.append((ok, text))
     return out
