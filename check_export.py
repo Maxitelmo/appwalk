@@ -237,7 +237,11 @@ def walk_kind(row):
         return WALK_IDS[rid], direction
     if role == "message":
         return "text", direction
-    # A message of one emoji is drawn large and described, not written (the 👍 of the known-data chat).
+    # A message of one emoji is drawn large and described, not written (the 👍 of the known-data chat). It is a text,
+    # counted as one: a large emoji written twice in a walk passed while a text written twice failed (#62). Other
+    # descriptions (a sticker, a GIF) stay apart and are not counted.
+    if text and not any(ch.isalnum() for ch in text):
+        return "text", direction
     return "described", direction
 
 

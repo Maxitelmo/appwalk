@@ -2426,6 +2426,24 @@ class ExportCheckTests(unittest.TestCase):
             self.assertEqual((c["found"], c["behind_tile"], c["missing"]), (1, 3, 2))
             self.assertFalse(check_export.passed(counts))
 
+    def test_a_large_emoji_written_twice_fails_as_a_text_written_twice_does(self):
+        # abrignoni/appwalk#62: the same thing with a text failed, with a large emoji (a described line) it passed.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Ana: Hola\n"
+            "22/11/2026, 12:01 - Beto: \U0001F44D\n")
+        for second in (walk_row(3, "described", "\U0001F44D", "received", rid="media_container", desc="\U0001F44D"),
+                       walk_row(3, "message", "\U0001F44D", "received")):
+            walk = [walk_row(1, "message", "Hola", "sent"),
+                    walk_row(2, "described", "\U0001F44D", "received", rid="media_container", desc="\U0001F44D"), second]
+            rows, counts = check_export.compare(export, walk, "Ana")
+            self.assertEqual((counts["text"]["found"], counts["text"]["only_walk"]), (2, 1))
+            self.assertFalse(check_export.passed(counts))
+        # A described line with words in it (a sticker, a GIF) is not a text.
+        rows, counts = check_export.compare(export, walk[:2] + [walk_row(3, "described", "Sticker", "received", rid="media_container")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
     def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
         # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
         # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
