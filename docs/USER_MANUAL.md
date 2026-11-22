@@ -432,8 +432,9 @@ last tile, "+ 3", over the rest: the walk cannot show those, so as many of the a
 not find as the tile stands for are "behind the album's last tile", not missing; any more are missing.
 The walk shows an album's photos as "Ver
 foto, 1 de 6" and the export lists their files in an order of its own, so an album's lines are counts:
-each says it is one of the album's photos, not which file. A link sent on its own is shown by
-WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System
+each says it is one of the album's photos, not which file. A link sent on its own is counted: it is
+found by its text, or, when WhatsApp shows only its preview card, by up to three text lines where it
+belongs, one of them holding the link's address ("github.com"); the card's lines are not counted. System
 lines (group created, the encryption notice) are listed, not counted. When the walk did not confirm
 reaching an end of the list (`--stop-at`, a cap), the export's lines past the first or last one found
 there are "not walked", not "missing". Times are not compared.

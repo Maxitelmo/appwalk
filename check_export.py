@@ -12,7 +12,8 @@ For each line of the export:
 - a picture or a video: is there one, and its caption, when it has one; in an album with more files than its
   grid shows, the files the grid does not show are behind its last tile, not missing;
 - a deleted message: is there a deleted-message line;
-- a link sent on its own: found, or said to be shown as a preview card (section 14 of the manual);
+- a link sent on its own: found by its text, or as its preview card when that is all the walk shows of it
+  (section 14 of the manual);
 - a call, answered or missed, which the export writes as an empty message from the one who called: is there
   a call line;
 - system lines (group created, the encryption notice) are listed, not counted.
@@ -41,6 +42,7 @@ import os
 import re
 import sys
 import unicodedata
+import urllib.parse
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,8 +55,8 @@ COLUMNS = ["export_line", "kind", "author", "direction_by_export", "text", "resu
 
 FOUND, MISSING, NOT_WALKED, ONLY_WALK = "found", "missing", "not walked", "only in the walk"
 SYSTEM = "system line (not counted)"
-LINK_CARD = "link sent alone: WhatsApp shows a preview card, not the typed link (not counted)"
-CARD_LINE = "only in the walk, where the export has a link sent alone: taken as its preview card (not counted)"
+LINK_CARD = "found as its preview card: WhatsApp showed the card, not the typed link"
+CARD_LINE = "only in the walk, where the export has a link sent alone: a line of its preview card (not counted)"
 OTHER_FILE = "attachment of another kind (not compared)"
 ALBUM = "album: the photos and videos after it are its own lines (not counted)"
 BEHIND_TILE = "behind the album's last tile: the walk shows the album's first files only (not counted as missing)"
@@ -68,9 +70,9 @@ ALBUM_NOTE = "matched as one of the album's photos; the walk does not say which 
 ALBUM_PHOTO = re.compile(r"Ver foto, \d+ de (\d+)")
 ALBUM_TILE = re.compile(r"Ver los (\d+) archivos multimedia")
 # The kinds that are counted, in the order the summary gives them.
-KINDS = ["text", "caption", "voice note", "picture", "video", "deleted", "call"]
-PLURAL = {"text": "texts", "caption": "captions", "voice note": "voice notes", "picture": "pictures", "video": "videos",
-          "deleted": "deleted messages", "call": "calls"}
+KINDS = ["text", "caption", "link", "voice note", "picture", "video", "deleted", "call"]
+PLURAL = {"text": "texts", "caption": "captions", "link": "links sent alone", "voice note": "voice notes",
+          "picture": "pictures", "video": "videos", "deleted": "deleted messages", "call": "calls"}
 
 # The line that starts a message in an Android export, once odd spaces are plain ones: "14/11/2026, 03:22 - "
 # (24 hours, Samsung SM-G990E, es-US) or "14/11/26, 3:22 a. m. - " (12 hours). What follows is "Name: text"
@@ -379,18 +381,24 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
             return False
         return (i < first and oldest_unsure) or (i > last and newest_unsure)
 
-    # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
-    # so the walk has the card's lines where the export has the link. The walk's lines that no export line
-    # took, between the messages found just before and just after such a link, are taken as that card.
-    # A link in the part that was not walked has no card in the walk either (a walk with --stop-at on a Samsung
-    # SM-G990E, 21 November 2026, called such a link's result a preview card).
-    card = set()
+    # A link sent on its own can be shown as its preview card alone (title, snippet, address: section 14 of the
+    # manual), with no line holding the typed link. The card is up to three text lines no export line took, between
+    # the messages found just before and just after the link, one of which holds the link's address ("github.com").
+    # Without that address any line there was taken as the card: a voice note written twice, a photo, another link
+    # (#62, found by testing made-up chats). A link in the part that was not walked has no card in the walk either
+    # (a walk with --stop-at on a Samsung SM-G990E, 21 November 2026, called such a link's result a preview card).
+    card, by_card = set(), {}
     for i, x in enumerate(ex):
         if x["kind"] != "link" or i in pairs or not_walked(i):
             continue
         before = max((pairs[p] for p in pairs if p < i), default=-1)
         after = min((pairs[q] for q in pairs if q > i), default=len(wk))
-        card |= {j for j in range(before + 1, after) if j not in used}
+        host = (urllib.parse.urlsplit(x["text"]).hostname or "").removeprefix("www.")
+        lines = [j for j in range(before + 1, after) if j not in used and j not in card and wk[j][1] == "text"]
+        holds = [j for j in lines if host and host in plain(wk[j][0].get("text")).lower()]
+        if holds and len(lines) <= 3:
+            card |= set(lines)
+            by_card[i] = holds[0]
     # An album with more files than its grid shows ends in a tile for the rest ("Ver los 6 archivos multimedia" under
     # a "+ 3"): the walk cannot show those files, so that many of the album's files it did not find are behind the
     # tile, not missing. The tile stands for the number on it; with no "+ N" line beside it, for all but the three
@@ -457,8 +465,15 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                 row["note"] = "past the end of the list the walk did not confirm reaching"
                 if c is not None:
                     c["not_walked"] += 1
-            elif x["kind"] == "link":
-                row["result"] = LINK_CARD
+            elif i in by_card:
+                r, _, direction = wk[by_card[i]]
+                row.update(result=LINK_CARD, walk_line=r.get("line", ""), walk_direction=direction,
+                           screenshot=r.get("screenshot", ""))
+                row["direction_agrees"] = ("yes" if direction == by_export else "NO") if direction else "no direction in the walk"
+                if c is not None:
+                    c["found"] += 1
+                    c["direction_right"] += direction == by_export
+                    c["no_direction"] += not direction
             else:
                 row["result"] = MISSING
                 if c is not None:

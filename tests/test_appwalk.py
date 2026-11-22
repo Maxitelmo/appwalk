@@ -2199,7 +2199,8 @@ def walk_of_the_chat(extra=()):
             walk_row(7, "described", "Agrandar foto", "received", rid="image"),
             walk_row(8, "message", "Una foto", "received", rid="caption"),
             walk_row(9, "message", "Eliminaste este mensaje.", "sent"),
-            walk_row(10, "message", "Example Domain", "received"),     # the link's preview card
+            walk_row(10, "message", "Example Domain", "received"),     # the link's preview card: its title...
+            walk_row(10, "message", "example.com", "received"),        # ...and its address
             walk_row(11, "message", "Chau", "received")]
     return rows + list(extra)
 
@@ -2233,7 +2234,8 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(check_export.parse_export(EXPORT_CHAT), walk_of_the_chat(), "Ana")
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual({k: (c["export"], c["found"], c["direction_right"]) for k, c in counts.items() if c["export"]},
-                         {"text": (3, 3, 3), "voice note": (1, 1, 1), "picture": (1, 1, 1), "caption": (1, 1, 1), "deleted": (1, 1, 1)})
+                         {"text": (3, 3, 3), "voice note": (1, 1, 1), "picture": (1, 1, 1), "caption": (1, 1, 1), "deleted": (1, 1, 1),
+                          "link": (1, 1, 1)})   # the link, found as its preview card
         by_line = {(r["export_line"], r["kind"]): r["result"] for r in rows}
         self.assertEqual(by_line[(10, "link")], check_export.LINK_CARD)        # its own result, not "missing"
         self.assertEqual(by_line[(1, "system")], check_export.SYSTEM)
@@ -2285,6 +2287,7 @@ class ExportCheckTests(unittest.TestCase):
             "1/12/26, 9:02 - Beto: https://example.com/x\n"
             "1/12/26, 9:03 - Beto: Chau\n")
         walk = [walk_row(1, "message", "a line the export does not have", "received"),
+                walk_row(1, "message", "example.com", "received"),
                 walk_row(2, "message", "Chau", "received")]
         rows, _ = check_export.compare(export, walk, "Ana", ends=(True, False))
         by_text = {r["text"]: r["result"] for r in rows}
@@ -2295,6 +2298,24 @@ class ExportCheckTests(unittest.TestCase):
         by_text = {r["text"]: r["result"] for r in rows}
         self.assertEqual(by_text["https://example.com/x"], check_export.LINK_CARD)
         self.assertEqual(by_text["a line the export does not have"], check_export.CARD_LINE)
+
+    def test_a_link_card_takes_only_text_lines_that_show_its_address(self):
+        # Found testing made-up chats for #62: any walk line where the export has a link was taken as its card, so a
+        # voice note written twice there, or a different link and a typed message, passed.
+        import check_export
+        export = check_export.parse_export(
+            "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "1/12/26, 9:01 - Ana: \u200ePTT-20261201-WA0000.opus (archivo adjunto)\n"
+            "1/12/26, 9:02 - Beto: https://example.com/x\n"
+            "1/12/26, 9:03 - Beto: Chau\n")
+        note = walk_row(1, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar")
+        chau = walk_row(3, "message", "Chau", "received")
+        for between in ([note],                                                                  # a voice note written twice
+                        [walk_row(2, "message", "https://other.org/y", "received"),
+                         walk_row(2, "message", "a message typed there", "received")]):          # another link and a message
+            rows, counts = check_export.compare(export, [note] + between + [chau], "Ana")
+            self.assertFalse(check_export.passed(counts), between)
+            self.assertEqual([r["result"] for r in rows if r["kind"] == "link"], [check_export.MISSING])
 
     def export_with_chat(self):
         import zipfile
