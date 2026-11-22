@@ -325,19 +325,30 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         after = min((pairs[q] for q in pairs if q > i), default=len(wk))
         card |= {j for j in range(before + 1, after) if j not in used}
     # An album with more files than its grid shows ends in a tile for the rest ("Ver los 6 archivos multimedia" under
-    # a "+ 3"): the walk cannot show those files, so the album's files it did not find are behind the tile, not
-    # missing. The album is the one, of the tile's size, whose found file is nearest the tile in the walk.
+    # a "+ 3"): the walk cannot show those files, so that many of the album's files it did not find are behind the
+    # tile, not missing. The tile stands for the number on it; with no "+ N" line beside it, for all but the three
+    # photos a grid of four shows. Any other file of the album the walk did not find is missing (abrignoni/appwalk#62:
+    # an album of 6 with only photo 1 and the tile in the walk was called whole, with 5 behind a tile for 3). The
+    # album is the one, of the tile's size, whose found file is nearest the tile in the walk.
     inverse = {w: e for e, w in pairs.items()}
+    position = {id(r): p for p, r in enumerate(walk_rows)}
     behind, tiles = set(), set()
     for j, (r, kind, _) in enumerate(wk):
         if kind != "album tile":
             continue
         size = int(ALBUM_TILE.fullmatch(plain(r.get("text"))).group(1))
+        hidden = size - 3
+        for near in walk_rows[position[id(r)] + 1:position[id(r)] + 3]:
+            m = re.fullmatch(r"\+\s*(\d+)", plain(near.get("text")))
+            if (near.get("resource_id") or "").endswith(":id/more") and m:
+                hidden = int(m.group(1))
+                break
         album = next((ex[inverse[k]]["album"] for k in sorted(inverse, key=lambda k: abs(k - j))
                       if ex[inverse[k]].get("album_size") == size), None)
         if album is not None:
             tiles.add(j)
-            behind |= {i for i, x in enumerate(ex) if x.get("album") == album and i not in pairs}
+            unfound = [i for i, x in enumerate(ex) if x.get("album") == album and i not in pairs]
+            behind |= set(unfound[:max(0, hidden)])
     found_at = {id(x): i for i, x in enumerate(ex)}
     rows, counts = [], {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0,
                             "missing": 0, "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}

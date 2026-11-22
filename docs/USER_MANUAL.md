@@ -426,8 +426,9 @@ has, how many were found with the direction the export gives, and how many the w
 export does not (a voice note written twice is caught that way). The export also starts an album with
 an empty message, followed by its photos and videos from the same sender at the same minute: that
 line is the album, not a call, and is not counted. An album with more files than its grid shows has a
-last tile, "+ 3", over the rest: the walk cannot show those, so the export's files of that album it
-did not find are "behind the album's last tile", not missing. The walk shows an album's photos as "Ver
+last tile, "+ 3", over the rest: the walk cannot show those, so as many of the album's files it did
+not find as the tile stands for are "behind the album's last tile", not missing; any more are missing.
+The walk shows an album's photos as "Ver
 foto, 1 de 6" and the export lists their files in an order of its own, so an album's lines are counts:
 each says it is one of the album's photos, not which file. A link sent on its own is shown by
 WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System

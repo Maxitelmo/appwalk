@@ -2411,6 +2411,21 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(export, walk[:2] + walk[3:], "Ana")
         self.assertEqual((counts["picture"]["missing"], counts["picture"]["behind_tile"]), (1, 3))
 
+    def test_the_last_tile_stands_for_the_files_on_it_not_all_the_rest(self):
+        # abrignoni/appwalk#62: an album of 6 with only photo 1 and the tile in the walk passed, with 5 behind a tile
+        # that stands for 3. The other 2 photos the grid shows are missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7)))
+        tile = walk_row(2, "described", "Ver los 6 archivos multimedia", "received", rid="thumb")
+        for walk in ([walk_row(1, "described", "Ver foto, 1 de 6", "received", rid="thumb"), tile, walk_row(3, "other", "+ 3", rid="more")],
+                     [walk_row(1, "described", "Ver foto, 1 de 6", "received", rid="thumb"), tile]):   # with no "+ 3" line
+            _, counts = check_export.compare(export, walk, "Ana")
+            c = counts["picture"]
+            self.assertEqual((c["found"], c["behind_tile"], c["missing"]), (1, 3, 2))
+            self.assertFalse(check_export.passed(counts))
+
     def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
         # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
         # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
