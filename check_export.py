@@ -9,7 +9,8 @@ that the export does not (a voice note written twice, abrignoni/appwalk#39).
 For each line of the export:
 - a text: is it the text of a message line in the transcript, with the direction its sender gives;
 - a voice note (PTT-....opus): is there a voice note line;
-- a picture or a video: is there one, and its caption, when it has one;
+- a picture or a video: is there one, and its caption, when it has one; in an album with more files than its
+  grid shows, the files the grid does not show are behind its last tile, not missing;
 - a deleted message: is there a deleted-message line;
 - a link sent on its own: found, or said to be shown as a preview card (section 14 of the manual);
 - a call, answered or missed, which the export writes as an empty message from the one who called: is there
@@ -56,6 +57,12 @@ LINK_CARD = "link sent alone: WhatsApp shows a preview card, not the typed link 
 CARD_LINE = "only in the walk, where the export has a link sent alone: taken as its preview card (not counted)"
 OTHER_FILE = "attachment of another kind (not compared)"
 ALBUM = "album: the photos and videos after it are its own lines (not counted)"
+BEHIND_TILE = "behind the album's last tile: the walk shows the album's first files only (not counted as missing)"
+TILE = "the album's last tile, standing for the files it does not show (not counted)"
+# A photo of an album, and the last tile of an album with more files than its grid shows, as WhatsApp 2.26.45.99
+# describes them (es-US).
+ALBUM_PHOTO = re.compile(r"Ver foto, \d+ de (\d+)")
+ALBUM_TILE = re.compile(r"Ver los (\d+) archivos multimedia")
 # The kinds that are counted, in the order the summary gives them.
 KINDS = ["text", "caption", "voice note", "picture", "video", "deleted", "call"]
 PLURAL = {"text": "texts", "caption": "captions", "voice note": "voice notes", "picture": "pictures", "video": "videos",
@@ -155,9 +162,12 @@ def parse_export(text):
         return k - i - 1
 
     out = []
+    album = None   # [the album's line, its size, how many of its files are still to come]
     for i, msg in enumerate(messages):
         n, author = msg["n"], msg["author"]
         body = tidy(msg)
+        if album and album[2] == 0:
+            album = None
         if not author:
             out.append({"n": n, "author": "", "kind": "system", "text": plain(body), "file": ""})
             continue
@@ -168,6 +178,7 @@ def parse_export(text):
             files = album_files(i)
             if files >= 2:
                 out.append({"n": n, "author": author, "kind": "album", "text": f"{files} files", "file": ""})
+                album = [n, files, files]
             else:
                 out.append({"n": n, "author": author, "kind": "call", "text": "", "file": ""})
             continue
@@ -178,6 +189,9 @@ def parse_export(text):
             kind = ("voice note" if name.upper().startswith("PTT-") else "picture" if name.upper().startswith("IMG-")
                     else "video" if name.upper().startswith("VID-") else "attachment")
             out.append({"n": n, "author": author, "kind": kind, "text": name, "file": name})
+            if album and kind in ("picture", "video"):
+                out[-1].update(album=album[0], album_size=album[1])
+                album[2] -= 1
             if plain(more):
                 out.append({"n": n, "author": author, "kind": "caption", "text": plain(more), "file": ""})
             continue
@@ -208,6 +222,13 @@ def walk_kind(row):
     if text in (DELETED_OWN, DELETED_OTHERS):
         # The walk's own words say whose it was, as on the screen: "Eliminaste" on the phone that deleted it.
         return "deleted", direction or ("sent" if text == DELETED_OWN else "received")
+    if rid == "thumb" and role == "described":
+        # WhatsApp 2.26.45.99 draws a video and each photo of an album as a view "thumb" (abrignoni/appwalk#61):
+        # "Video, HD, duration 5 segundos", "Ver foto, 1 de 3", and for an album with more than the grid shows, a
+        # last tile "Ver los 6 archivos multimedia" over the ones it does not show.
+        if ALBUM_TILE.fullmatch(text):
+            return "album tile", direction
+        return ("video" if text.startswith("Video,") else "picture"), direction
     if rid in WALK_IDS and (role == "described" or rid == "caption"):
         return WALK_IDS[rid], direction
     if role == "message":
@@ -266,8 +287,14 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         k = walk_kind(r)
         if k:
             wk.append((r, k[0], k[1]))
-    a = [key(x["kind"], x["text"]) for x in ex]
-    b = [key(kind, r.get("text")) for r, kind, _ in wk]
+    # A photo of an album carries the album's size on both sides: the export's files after the album's line, the
+    # walk's "Ver foto, 1 de 3". Photos look alike to the line-up, so without it one missing from an album of 3 took
+    # a photo of the next album in its place.
+    def album_size(r):
+        m = ALBUM_PHOTO.fullmatch(plain(r.get("text")))
+        return int(m.group(1)) if m else None
+    a = [key(x["kind"], x["text"]) + ((x.get("album_size"),) if x["kind"] == "picture" else ()) for x in ex]
+    b = [key(kind, r.get("text")) + ((album_size(r),) if kind == "picture" else ()) for r, kind, _ in wk]
     pairs = {}
     for block in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
         for i in range(block.size):
@@ -293,9 +320,23 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         before = max((pairs[p] for p in pairs if p < i), default=-1)
         after = min((pairs[q] for q in pairs if q > i), default=len(wk))
         card |= {j for j in range(before + 1, after) if j not in used}
+    # An album with more files than its grid shows ends in a tile for the rest ("Ver los 6 archivos multimedia" under
+    # a "+ 3"): the walk cannot show those files, so the album's files it did not find are behind the tile, not
+    # missing. The album is the one, of the tile's size, whose found file is nearest the tile in the walk.
+    inverse = {w: e for e, w in pairs.items()}
+    behind, tiles = set(), set()
+    for j, (r, kind, _) in enumerate(wk):
+        if kind != "album tile":
+            continue
+        size = int(ALBUM_TILE.fullmatch(plain(r.get("text"))).group(1))
+        album = next((ex[inverse[k]]["album"] for k in sorted(inverse, key=lambda k: abs(k - j))
+                      if ex[inverse[k]].get("album_size") == size), None)
+        if album is not None:
+            tiles.add(j)
+            behind |= {i for i, x in enumerate(ex) if x.get("album") == album and i not in pairs}
     found_at = {id(x): i for i, x in enumerate(ex)}
     rows, counts = [], {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0,
-                            "missing": 0, "walk": 0, "only_walk": 0} for k in KINDS}
+                            "missing": 0, "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}
     for x in export_lines:
         by_export = ("sent" if x["author"] == me else "received") if x["author"] else ""
         row = {"export_line": x["n"], "kind": x["kind"], "author": x["author"], "direction_by_export": by_export,
@@ -324,6 +365,10 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                     c["found"] += 1
                     c["direction_right"] += direction == by_export
                     c["no_direction"] += not direction
+            elif i in behind:
+                row["result"] = BEHIND_TILE
+                if c is not None:
+                    c["behind_tile"] += 1
             elif not_walked(i):
                 row["result"] = NOT_WALKED
                 row["note"] = "past the end of the list the walk did not confirm reaching"
@@ -343,7 +388,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         if c is not None and j not in card:
             c["only_walk"] += 1
         rows.append({"export_line": "", "kind": kind, "author": "", "direction_by_export": "", "text": plain(r.get("text")),
-                     "result": CARD_LINE if j in card else ONLY_WALK, "walk_line": r.get("line", ""),
+                     "result": TILE if j in tiles else CARD_LINE if j in card else ONLY_WALK, "walk_line": r.get("line", ""),
                      "walk_direction": direction, "direction_agrees": "", "screenshot": r.get("screenshot", ""), "note": ""})
     # A walk line found for an export line counts as the export's kind (a large emoji is described, not
     # written, and is still a text); one found for none counts as its own kind.
@@ -370,6 +415,8 @@ def count_lines(counts):
             text += f", {c['no_direction']} with none in the walk)" if c["no_direction"] else ")"
         if c["not_walked"]:
             text += f", {c['not_walked']} not walked"
+        if c["behind_tile"]:
+            text += f", {c['behind_tile']} behind an album's last tile"
         if c["missing"]:
             text += f", {c['missing']} MISSING"
         text += f"; {c['walk']} in the walk" + (f", {c['only_walk']} of them NOT in the export" if c["only_walk"] else "")

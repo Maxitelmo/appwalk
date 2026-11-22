@@ -425,7 +425,9 @@ writes a call, answered or missed, as an empty message from the one who called):
 has, how many were found with the direction the export gives, and how many the walk has that the
 export does not (a voice note written twice is caught that way). The export also starts an album with
 an empty message, followed by its photos and videos from the same sender at the same minute: that
-line is the album, not a call, and is not counted. A link sent on its own is shown by
+line is the album, not a call, and is not counted. An album with more files than its grid shows has a
+last tile, "+ 3", over the rest: the walk cannot show those, so the export's files of that album it
+did not find are "behind the album's last tile", not missing. A link sent on its own is shown by
 WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System
 lines (group created, the encryption notice) are listed, not counted. When the walk did not confirm
 reaching an end of the list (`--stop-at`, a cap), the export's lines past the first or last one found

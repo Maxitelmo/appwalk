@@ -2384,6 +2384,33 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual([r["result"] for r in rows if r["kind"] == "album"], [check_export.ALBUM])
         self.assertEqual((counts["call"]["export"], counts["picture"]["export"]), (2, 4))
 
+    def test_an_albums_photos_and_the_ones_behind_its_last_tile(self):
+        # As the Samsung SM-G990E walked an album of 3 it sent and one of 6 it received (22 November 2026): the grid of
+        # 6 shows three photos and a fourth tile, "Ver los 6 archivos multimedia", over the other three.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            + "".join(f"22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (1, 2, 0))
+            + "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7))
+            + "22/11/2026, 12:16 - Beto: \u200eVID-20261122-WA0009.mp4 (archivo adjunto)\n")
+        walk = ([walk_row(k, "described", f"Ver foto, {k} de 3", "sent", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(3 + k, "described", f"Ver foto, {k} de 6", "received", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(7, "described", "Ver los 6 archivos multimedia", "received", rid="thumb"),
+                   walk_row(8, "other", "+ 3", rid="more"),
+                   walk_row(9, "described", "Video, HD, duration 5 segundos", "received", rid="thumb")])
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        c = counts["picture"]
+        self.assertEqual((c["export"], c["found"], c["behind_tile"], c["missing"], c["only_walk"]), (9, 6, 3, 0, 0))
+        self.assertEqual((counts["video"]["found"], counts["video"]["direction_right"]), (1, 1))
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "album tile"], [check_export.TILE])
+        self.assertEqual(sum(1 for r in rows if r["result"] == check_export.BEHIND_TILE), 3)
+        # A photo the grid shows and the walk does not have is still missing, not behind a tile.
+        rows, counts = check_export.compare(export, walk[:2] + walk[3:], "Ana")
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["behind_tile"]), (1, 3))
+
     def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
         import check_export
         out = self.export_with_chat()
