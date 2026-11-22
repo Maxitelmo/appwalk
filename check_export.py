@@ -336,9 +336,11 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     last = max(pairs) if pairs else None
     used = set(pairs.values())
     def not_walked(i):
-        """Past the first or last line found, at an end of the list the walk did not confirm reaching."""
+        """Past the first or last line found, at an end of the list the walk did not confirm reaching. With no line
+        found at all there is no such end: a walk that found nothing passed when one end was unsure, every line of
+        the export called not walked (#62, found by testing made-up chats)."""
         if first is None:
-            return oldest_unsure or newest_unsure
+            return False
         return (i < first and oldest_unsure) or (i > last and newest_unsure)
 
     # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
@@ -574,17 +576,21 @@ def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, it
                            + ". Give --me as the export spells the walked phone's owner, or --owner-wrote-nothing "
                              "if the owner wrote nothing in this chat")
     built, _notes, _ = transcript.build(export, profile_folder)
+    # The walked items are the log's, not the transcript's: a walk that read no line has none in the transcript, and
+    # its item was taken as "", whose ends the log does not have, so both ends counted as unsure (#62).
     items = []
-    for r in built:
-        if r["item"] not in items:
-            items.append(r["item"])
+    for r in rows:
+        if r["action"] == "walk_start":
+            name = json.loads(r["detail"]).get("item") or ""
+            if name not in items:
+                items.append(name)
     if item is None:
         if len(items) > 1:
-            raise CheckStopped("the transcript has more than one walked item; say which with --item: "
+            raise CheckStopped("the export has more than one walked item; say which with --item: "
                                + ", ".join(repr(i) for i in items))
         item = items[0] if items else ""
     elif item not in items:
-        raise CheckStopped(f"the transcript has no item {item!r}; it has: " + ", ".join(repr(i) for i in items))
+        raise CheckStopped(f"the export has no walked item {item!r}; it has: " + ", ".join(repr(i) for i in items))
     ends = walked_ends(export, item)
     as_text = [{k: "" if v is None else str(v) for k, v in r.items()} for r in built]
     result, counts = compare(lines, [r for r in as_text if r["item"] == item], me, ends)

@@ -2467,6 +2467,22 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(export, walk[:2] + [walk_row(3, "described", "Sticker", "received", rid="media_container")], "Ana")
         self.assertTrue(check_export.passed(counts), counts)
 
+    def test_a_walk_that_found_nothing_does_not_pass(self):
+        # Found testing made-up chats for #62: with one end unsure and no line found, every export line was "not
+        # walked" and the check passed.
+        import check_export
+        from unittest import mock
+        export = check_export.parse_export(EXPORT_CHAT)
+        for ends in ((True, False), (False, True), (True, True)):
+            rows, counts = check_export.compare(export, [], "Ana", ends=ends)
+            self.assertFalse(check_export.passed(counts), ends)
+            self.assertNotIn(check_export.NOT_WALKED, [r["result"] for r in rows])
+        # End to end: a walk whose transcript is empty is still checked as the item the log walked.
+        out = self.export_with_chat()
+        with mock.patch.object(transcript, "build", lambda export, folder=None: ([], [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        self.assertFalse(ok)
+
     def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
         # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
         # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
