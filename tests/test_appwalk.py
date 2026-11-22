@@ -2491,6 +2491,18 @@ class ExportCheckTests(unittest.TestCase):
             ok, lines = check_export.check(out, "Ana")
         self.assertFalse(ok)
 
+    def test_a_walk_that_stopped_short_is_lined_up_from_the_end_it_reached(self):
+        # A walk with --stop-at covers the newest messages. Found testing made-up chats for #62: an "ok" said four
+        # times, the walk showing only the newest, was found in the oldest copy and the other three were missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            + "".join(f"22/11/2026, 12:0{k} - Ana: ok\n" for k in range(4)))
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "ok", "sent")], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "text"],
+                         [check_export.NOT_WALKED] * 3 + [check_export.FOUND])
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export

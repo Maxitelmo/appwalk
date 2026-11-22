@@ -287,6 +287,19 @@ def walked_ends(export, item):
     return oldest, newest
 
 
+def line_up(a, b, from_end=False):
+    """{index in a: index in b} for the lines two lists share, in order (difflib, without its junk rule: five voice
+    notes look alike and must all count). With from_end, lined up from the lists' ends."""
+    if from_end:
+        back = line_up(a[::-1], b[::-1])
+        return {len(a) - 1 - i: len(b) - 1 - j for i, j in back.items()}
+    pairs = {}
+    for block in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
+        for i in range(block.size):
+            pairs[block.a + i] = block.b + i
+    return pairs
+
+
 def settle_albums(export_lines, walk_rows):
     """The export's lines, with each album the walk does not show taken back to what it then is: a call, and photos
     and videos of their own. The export writes an album's line and a call alike, as an empty message, so a call
@@ -332,10 +345,10 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         return int(m.group(1)) if m else None
     a = [key(x["kind"], x["text"]) + ((x.get("album_size"),) if x["kind"] == "picture" else ()) for x in ex]
     b = [key(kind, r.get("text")) + ((album_size(r),) if kind == "picture" else ()) for r, kind, _ in wk]
-    pairs = {}
-    for block in difflib.SequenceMatcher(None, a, b, autojunk=False).get_matching_blocks():
-        for i in range(block.size):
-            pairs[block.a + i] = block.b + i
+    # A walk that did not reach the oldest end (--stop-at) covers the newest part, so the line-up starts from the
+    # newest end: from the oldest, a line said often ("ok") was found in its oldest copies and the newest ones the
+    # walk shows came out missing (#62, found by testing made-up chats).
+    pairs = line_up(a, b, from_end=oldest_unsure and not newest_unsure)
     first = min(pairs) if pairs else None
     last = max(pairs) if pairs else None
     used = set(pairs.values())
