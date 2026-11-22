@@ -2380,9 +2380,32 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual([(x["n"], x["kind"]) for x in export],
                          [(1, "system"), (2, "album"), (3, "picture"), (4, "picture"), (5, "picture"), (6, "call"),
                           (7, "call"), (8, "picture")])   # 7: Beto's empty line is not followed by Beto's photos
-        rows, counts = check_export.compare(export, [], "Ana")
+        album = [walk_row(k, "described", f"Ver foto, {k} de 3", "sent", rid="thumb") for k in (1, 2, 3)]
+        rows, counts = check_export.compare(export, album, "Ana")
         self.assertEqual([r["result"] for r in rows if r["kind"] == "album"], [check_export.ALBUM])
         self.assertEqual((counts["call"]["export"], counts["picture"]["export"]), (2, 4))
+
+    def test_a_call_and_two_photos_sent_apart_are_not_an_album(self):
+        # abrignoni/appwalk#62: a call followed by two photos sent one by one in the same minute was read as an album,
+        # and the call and the photos came out as differences. The walk has the call and two photos on their own.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                walk_row(3, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["found"], counts["picture"]["found"]), (1, 2))
+        self.assertEqual({r["result"] for r in rows if r["export_line"]}, {check_export.SYSTEM, check_export.FOUND})
+        # With the walk showing an album of 2 instead, the same lines are an album.
+        album = [walk_row(k, "described", f"Ver foto, {k} de 2", "sent", rid="thumb") for k in (1, 2)]
+        rows, counts = check_export.compare(export, album, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual(([r["result"] for r in rows if r["kind"] == "album"], counts["call"]["export"]), ([check_export.ALBUM], 0))
 
     def test_an_albums_photos_and_the_ones_behind_its_last_tile(self):
         # As the Samsung SM-G990E walked an album of 3 it sent and one of 6 it received (22 November 2026): the grid of

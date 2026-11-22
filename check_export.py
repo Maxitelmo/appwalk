@@ -181,7 +181,8 @@ def parse_export(text):
             # one of 6). With none after it, it is a call.
             files = album_files(i)
             if files >= 2:
-                out.append({"n": n, "author": author, "kind": "album", "text": f"{files} files", "file": ""})
+                out.append({"n": n, "author": author, "kind": "album", "text": f"{files} files", "file": "",
+                            "album_size": files})
                 album = [n, files, files]
             else:
                 out.append({"n": n, "author": author, "kind": "call", "text": "", "file": ""})
@@ -285,10 +286,34 @@ def walked_ends(export, item):
     return oldest, newest
 
 
+def settle_albums(export_lines, walk_rows):
+    """The export's lines, with each album the walk does not show taken back to what it then is: a call, and photos
+    and videos of their own. The export writes an album's line and a call alike, as an empty message, so a call
+    followed by two photos sent apart at the same minute read as an album, and the call and the photos came out as
+    differences (#62). An album is kept when the walk has an album of that size ("Ver foto, 1 de 3", or a last tile
+    "Ver los 6 archivos multimedia"). The lines given are not changed."""
+    sizes = set()
+    for r in walk_rows:
+        if (r.get("resource_id") or "").endswith(":id/thumb"):
+            m = ALBUM_PHOTO.fullmatch(plain(r.get("text"))) or ALBUM_TILE.fullmatch(plain(r.get("text")))
+            if m:
+                sizes.add(int(m.group(1)))
+    out, undone = [], set()
+    for x in export_lines:
+        if x["kind"] == "album" and x.get("album_size") not in sizes:
+            undone.add(x["n"])
+            x = {**x, "kind": "call", "text": "", "album_size": None}
+        elif x.get("album") in undone:
+            x = {k: v for k, v in x.items() if k not in ("album", "album_size")}
+        out.append(x)
+    return out
+
+
 def compare(export_lines, walk_rows, me, ends=(False, False)):
     """Rows for export_check.csv and counts per kind. The export's lines and the transcript's are lined up in
     order (difflib, without its junk rule: five voice notes look alike and must all count)."""
     oldest_unsure, newest_unsure = ends
+    export_lines = settle_albums(export_lines, walk_rows)
     ex = [x for x in export_lines if x["kind"] not in ("system", "album", "attachment")]
     wk = []
     for r in walk_rows:
