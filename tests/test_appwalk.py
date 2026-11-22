@@ -2540,6 +2540,76 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(export[:2], [walk_row(1, "message", "ok", "received")], "Ana")
         self.assertEqual([r["direction_agrees"] for r in rows if r["kind"] == "text"], ["NO"])
 
+    def album_chat(self, *albums, after=""):
+        """An export with an encryption notice and, for each (sender, minute, files), an album."""
+        import check_export
+        text = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        wa = 0
+        for sender, minute, files in albums:
+            text += f"22/11/2026, 12:{minute:02d} - {sender}: \n"
+            for _ in range(files):
+                text += f"22/11/2026, 12:{minute:02d} - {sender}: \u200eIMG-20261122-WA{wa:04d}.jpg (archivo adjunto)\n"
+                wa += 1
+        return check_export.parse_export(text + after)
+
+    def grid(self, size, direction, start=1, shown=None):
+        """An album's grid as a walk reads it: its photos, and a last tile with "+ N" when it has more than four."""
+        rows = [walk_row(start + k, "described", f"Ver foto, {k + 1} de {size}", direction, rid="thumb")
+                for k in range(shown if shown is not None else (size if size <= 4 else 3))]
+        if size > 4:
+            rows += [walk_row(start + 3, "described", f"Ver los {size} archivos multimedia", direction, rid="thumb"),
+                     walk_row(start + 3, "other", f"+ {size - 3}", rid="more")]
+        return rows
+
+    def test_albums_are_lined_up_as_a_whole(self):
+        # Found testing made-up chats for #62. Photo by photo, two albums of 6 side by side mixed their photos (one
+        # album all missing), and a grid the walk wrote twice took the photos behind the tile and passed.
+        import check_export
+        two = self.album_chat(("Ana", 5, 6), ("Beto", 6, 6))
+        rows, counts = check_export.compare(two, self.grid(6, "sent") + self.grid(6, "received", 10), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"]), (6, 6))
+        one = self.album_chat(("Beto", 6, 6))
+        rows, counts = check_export.compare(one, self.grid(6, "received") + self.grid(6, "received", 10), "Ana")
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"], counts["picture"]["only_walk"]), (3, 3, 3))
+        # An album's caption shows under its grid, while the export has it after the first file.
+        cap = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\nLa playa\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0000.jpg (archivo adjunto)\n")
+        rows, counts = check_export.compare(cap, self.grid(3, "sent") + [walk_row(4, "message", "La playa", "sent", rid="caption")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_an_album_is_settled_where_it_stands(self):
+        # Found testing made-up chats for #62: an album decided by whether an album of its size was anywhere in the
+        # walk. A photo sent on its own right after an album, same minute, made an album of 4 that became a call; an
+        # album in the part not walked counted as a call; a call with two photos counted as an album when another
+        # album of 2 was in the walk.
+        import check_export
+        plus_one = self.album_chat(("Ana", 5, 4))
+        rows, counts = check_export.compare(plus_one, self.grid(3, "sent") + [walk_row(9, "described", "Agrandar foto", "sent", rid="image")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["call"]["export"]), (4, 0))
+        unwalked = self.album_chat(("Ana", 5, 3), after="22/11/2026, 12:09 - Beto: Hola\n")
+        rows, counts = check_export.compare(unwalked, [walk_row(1, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["not_walked"], counts["call"]["export"]), (3, 0))
+        call_then_album = self.album_chat(("Ana", 5, 2), ("Beto", 7, 2))
+        walk = ([walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                 walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                 walk_row(3, "described", "Agrandar foto", "sent", rid="image")] + self.grid(2, "received", 4))
+        rows, counts = check_export.compare(call_then_album, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["call", "album"])
+        # A walk that stopped half way up an album's grid: the photos above where it stopped are not walked.
+        cut = self.album_chat(("Beto", 5, 6))
+        rows, counts = check_export.compare(cut, self.grid(6, "received", shown=1), "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["picture"]["behind_tile"]), (1, 2, 3))
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export

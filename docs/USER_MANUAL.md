@@ -425,9 +425,12 @@ writes a call, answered or missed, as an empty message from the one who called):
 has, how many were found with the direction the export gives, and how many the walk has that the
 export does not (a voice note written twice is caught that way). The export also starts an album with
 an empty message, followed by its photos and videos from the same sender at the same minute: that
-line is the album, not a call, and is not counted, when the walk shows an album of that size ("Ver
-foto, 1 de 3"). A call followed by photos sent one by one is written the same way, so without such an
-album in the walk the line is a call and the photos are photos of their own. An album with more files than its grid shows has a
+line is the album, not a call, and is not counted. An album is lined up as a whole with the walk's
+album of the same size ("Ver foto, 1 de 3"). A call followed by photos sent one by one is written the
+same way, and a photo sent on its own right after an album is listed as one more file of it, so an
+album the walk has no album of that size for is settled where it stands: where the walk shows a call
+and photos of their own, or a smaller album and a photo, it is that; in the part not walked, it is
+not walked. An album with more files than its grid shows has a
 last tile, "+ 3", over the rest: the walk cannot show those, so as many of the album's files it did
 not find as the tile stands for are "behind the album's last tile", not missing; any more are missing.
 The walk shows an album's photos as "Ver

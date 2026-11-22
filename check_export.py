@@ -65,9 +65,10 @@ TILE = "the album's last tile, standing for the files it does not show (not coun
 # (IMG-…-WA0003, WA0008, WA0004 for photos 1 to 3 of an album of 6, 22 November 2026), so a found or hidden photo
 # of an album is one of the album's files, counted, not that file.
 ALBUM_NOTE = "matched as one of the album's photos; the walk does not say which file"
+NOT_WALKED_NOTE = "past the end of the list the walk did not confirm reaching"
 # A photo of an album, and the last tile of an album with more files than its grid shows, as WhatsApp 2.26.45.99
 # describes them (es-US).
-ALBUM_PHOTO = re.compile(r"Ver foto, \d+ de (\d+)")
+ALBUM_PHOTO = re.compile(r"Ver foto, (\d+) de (\d+)")
 ALBUM_TILE = re.compile(r"Ver los (\d+) archivos multimedia")
 # The kinds that are counted, in the order the summary gives them.
 KINDS = ["text", "caption", "link", "voice note", "picture", "video", "deleted", "call"]
@@ -315,51 +316,95 @@ def line_up_by_direction(a, b, a_dir, b_dir, from_end=False):
     return pairs
 
 
-def settle_albums(export_lines, walk_rows):
-    """The export's lines, with each album the walk does not show taken back to what it then is: a call, and photos
-    and videos of their own. The export writes an album's line and a call alike, as an empty message, so a call
-    followed by two photos sent apart at the same minute read as an album, and the call and the photos came out as
-    differences (#62). An album is kept when the walk has an album of that size ("Ver foto, 1 de 3", or a last tile
-    "Ver los 6 archivos multimedia"). The lines given are not changed."""
-    sizes = set()
-    for r in walk_rows:
-        if (r.get("resource_id") or "").endswith(":id/thumb"):
-            m = ALBUM_PHOTO.fullmatch(plain(r.get("text"))) or ALBUM_TILE.fullmatch(plain(r.get("text")))
-            if m:
-                sizes.add(int(m.group(1)))
-    out, undone = [], set()
+def walk_units(wk, walk_rows):
+    """The walk's message lines as units to line up: one per line, except that the photos of an album ("Ver foto, 1
+    de 6") and its last tile ("Ver los 6 archivos multimedia") make one unit, the album as its grid shows it. A photo
+    the grid already showed is kept apart as a line written twice; a photo after the album's tile starts another
+    album."""
+    position = {id(r): p for p, r in enumerate(walk_rows)}
+    units, album = [], None
+    for r, kind, direction in wk:
+        text = plain(r.get("text"))
+        photo = ALBUM_PHOTO.fullmatch(text) if kind == "picture" else None
+        tile = ALBUM_TILE.fullmatch(text) if kind == "album tile" else None
+        if not (photo or tile):
+            units.append({"kind": kind, "row": r, "direction": direction, "text": text})
+            album = None
+            continue
+        size = int(photo.group(2)) if photo else int(tile.group(1))
+        complete = album is not None and (album["tile"] is not None or (album["size"] <= 4 and len(album["photos"]) >= album["size"]))
+        if album is None or album["size"] != size or complete:
+            album = {"kind": "album", "size": size, "photos": {}, "extra": [], "tile": None, "hidden": 0, "dirs": [],
+                     "row": r, "text": text}
+            units.append(album)
+        album["dirs"].append(direction)
+        if photo:
+            k = int(photo.group(1))
+            if k in album["photos"]:
+                album["extra"].append((r, direction))
+            else:
+                album["photos"][k] = (r, direction)
+        else:
+            album["tile"] = r
+            # The tile stands for the number on it, read from the "+ 3" line beside it; with none, for all but the
+            # three photos a grid of four shows (an album of 6 with only photo 1 and the tile in a walk was called
+            # whole, with 5 behind a tile for 3: #62).
+            album["hidden"] = size - 3
+            for near in walk_rows[position[id(r)] + 1:position[id(r)] + 3]:
+                m = re.fullmatch(r"\+\s*(\d+)", plain(near.get("text")))
+                if (near.get("resource_id") or "").endswith(":id/more") and m:
+                    album["hidden"] = int(m.group(1))
+                    break
+    for u in units:
+        if u["kind"] == "album":
+            known = [d for d in u["dirs"] if d]
+            u["direction"] = max(set(known), key=known.count) if known else ""
+    return units
+
+
+def export_units(export_lines):
+    """The export's lines as units to line up: one per line, except that an album (its empty first line and its photos
+    and videos) makes one unit. The captions of an album's files follow the album, as they show under its grid."""
+    units, albums = [], {}
     for x in export_lines:
-        if x["kind"] == "album" and x.get("album_size") not in sizes:
-            undone.add(x["n"])
-            x = {**x, "kind": "call", "text": "", "album_size": None}
-        elif x.get("album") in undone:
-            x = {k: v for k, v in x.items() if k not in ("album", "album_size")}
-        out.append(x)
-    return out
+        if x["kind"] in ("system", "attachment"):
+            continue
+        if x["kind"] == "album":
+            albums[x["n"]] = {"kind": "album", "line": x, "files": [], "size": x.get("album_size"), "author": x["author"]}
+            units.append(albums[x["n"]])
+        elif x.get("album") in albums:
+            albums[x["album"]]["files"].append(x)
+        else:
+            units.append({"kind": x["kind"], "line": x, "author": x["author"], "text": x["text"]})
+    return units
+
+
+def unit_key(u):
+    if u["kind"] == "album":
+        return ("album", u["size"])
+    return key(u["kind"], u.get("text"))
 
 
 def compare(export_lines, walk_rows, me, ends=(False, False)):
-    """Rows for export_check.csv and counts per kind. The export's lines and the transcript's are lined up in
-    order (difflib, without its junk rule: five voice notes look alike and must all count)."""
+    """Rows for export_check.csv and counts per kind. The export's lines and the walk's are lined up in order, an
+    album as one unit on each side."""
     oldest_unsure, newest_unsure = ends
     # The owner's name as given is made plain like the export's names: a name with an emoji joined by U+200D, a
     # direction mark or two spaces never matched otherwise (#62, found by testing made-up chats).
     me = plain(me)
-    export_lines = settle_albums(export_lines, walk_rows)
-    ex = [x for x in export_lines if x["kind"] not in ("system", "album", "attachment")]
     wk = []
     for r in walk_rows:
         k = walk_kind(r)
         if k:
             wk.append((r, k[0], k[1]))
-    # A photo of an album carries the album's size on both sides: the export's files after the album's line, the
-    # walk's "Ver foto, 1 de 3". Photos look alike to the line-up, so without it one missing from an album of 3 took
-    # a photo of the next album in its place.
-    def album_size(r):
-        m = ALBUM_PHOTO.fullmatch(plain(r.get("text")))
-        return int(m.group(1)) if m else None
-    a = [key(x["kind"], x["text"]) + ((x.get("album_size"),) if x["kind"] == "picture" else ()) for x in ex]
-    b = [key(kind, r.get("text")) + ((album_size(r),) if kind == "picture" else ()) for r, kind, _ in wk]
+    E, W = export_units(export_lines), walk_units(wk, walk_rows)
+
+    def sent_by(author):
+        return ("sent" if author == me else "received") if author else ""
+
+    # An album lines up with an album of the same size: photos look alike, so lined up one by one two albums of the
+    # same size side by side mixed their photos, and a grid the walk wrote twice took the photos behind the tile in
+    # its place (#62, found by testing made-up chats).
     # A walk that did not reach the oldest end (--stop-at) covers the newest part, so the line-up starts from the
     # newest end: from the oldest, a line said often ("ok") was found in its oldest copies and the newest ones the
     # walk shows came out missing (#62, found by testing made-up chats).
@@ -367,12 +412,47 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # to direction, an "ok" of the owner's that the walk lacks took the other's "ok", which came out as a wrong
     # direction plus a missing line of the other's (#62, found by testing made-up chats). A line whose direction is
     # wrong is still found in the second pass, and still said to be wrong.
-    a_dir = [("sent" if x["author"] == me else "received") if x["author"] else "" for x in ex]
-    b_dir = [direction for _, _, direction in wk]
-    pairs = line_up_by_direction(a, b, a_dir, b_dir, from_end=oldest_unsure and not newest_unsure)
-    first = min(pairs) if pairs else None
-    last = max(pairs) if pairs else None
+    pairs = line_up_by_direction([unit_key(u) for u in E], [unit_key(u) for u in W],
+                                 [sent_by(u["author"]) for u in E], [u["direction"] for u in W],
+                                 from_end=oldest_unsure and not newest_unsure)
     used = set(pairs.values())
+
+    # The export writes an album's first line and a call alike, as an empty message, and lists a photo sent on its
+    # own right after an album, at the same minute, as one more file of it. An album the walk has no album of that
+    # size for is settled where it stands, between the lines found around it: a call there with photos of their own
+    # (a call followed by two photos sent apart read as an album, and both came out as differences: #62), or a
+    # smaller album with the rest as photos of their own.
+    as_call, as_album, file_pairs = {}, {}, {}
+    bounds = [(-1, -1)] + sorted(pairs.items()) + [(len(E), len(W))]
+    for (i0, j0), (i1, j1) in zip(bounds, bounds[1:]):
+        for i in range(i0 + 1, i1):
+            u = E[i]
+            if u["kind"] != "album":
+                continue
+            free = [j for j in range(j0 + 1, j1) if j not in used]
+            smaller = next((j for j in free if W[j]["kind"] == "album" and W[j]["size"] < u["size"]), None)
+            calls = [j for j in free if W[j]["kind"] == "call"]
+            call = next((j for j in calls if W[j]["direction"] == sent_by(u["author"])), calls[0] if calls else None)
+            if smaller is not None:
+                as_album[i] = smaller
+                used.add(smaller)
+                rest = u["files"][W[smaller]["size"]:]
+            elif call is not None:
+                as_call[i] = call
+                used.add(call)
+                rest = u["files"]
+            else:
+                continue
+            singles = [j for j in free if j not in used and W[j]["kind"] in ("picture", "video")]
+            more = line_up([(f["kind"],) for f in rest], [(W[j]["kind"],) for j in singles])
+            for a, b in more.items():
+                file_pairs[id(rest[a])] = singles[b]
+                used.add(singles[b])
+
+    settled = set(pairs) | set(as_call) | set(as_album)
+    first = min(settled) if settled else None
+    last = max(settled) if settled else None
+
     def not_walked(i):
         """Past the first or last line found, at an end of the list the walk did not confirm reaching. With no line
         found at all there is no such end: a walk that found nothing passed when one end was unsure, every line of
@@ -388,106 +468,141 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # (#62, found by testing made-up chats). A link in the part that was not walked has no card in the walk either
     # (a walk with --stop-at on a Samsung SM-G990E, 21 November 2026, called such a link's result a preview card).
     card, by_card = set(), {}
-    for i, x in enumerate(ex):
-        if x["kind"] != "link" or i in pairs or not_walked(i):
+    for i, u in enumerate(E):
+        if u["kind"] != "link" or i in pairs or not_walked(i):
             continue
         before = max((pairs[p] for p in pairs if p < i), default=-1)
-        after = min((pairs[q] for q in pairs if q > i), default=len(wk))
-        host = (urllib.parse.urlsplit(x["text"]).hostname or "").removeprefix("www.")
-        lines = [j for j in range(before + 1, after) if j not in used and j not in card and wk[j][1] == "text"]
-        holds = [j for j in lines if host and host in plain(wk[j][0].get("text")).lower()]
+        after = min((pairs[q] for q in pairs if q > i), default=len(W))
+        host = (urllib.parse.urlsplit(u["text"]).hostname or "").removeprefix("www.")
+        lines = [j for j in range(before + 1, after) if j not in used and j not in card and W[j]["kind"] == "text"]
+        holds = [j for j in lines if host and host in W[j]["text"].lower()]
         if holds and len(lines) <= 3:
             card |= set(lines)
             by_card[i] = holds[0]
-    # An album with more files than its grid shows ends in a tile for the rest ("Ver los 6 archivos multimedia" under
-    # a "+ 3"): the walk cannot show those files, so that many of the album's files it did not find are behind the
-    # tile, not missing. The tile stands for the number on it; with no "+ N" line beside it, for all but the three
-    # photos a grid of four shows. Any other file of the album the walk did not find is missing (abrignoni/appwalk#62:
-    # an album of 6 with only photo 1 and the tile in the walk was called whole, with 5 behind a tile for 3). The
-    # album is the one, of the tile's size, whose found file is nearest the tile in the walk.
-    inverse = {w: e for e, w in pairs.items()}
-    position = {id(r): p for p, r in enumerate(walk_rows)}
-    behind, tiles = set(), set()
-    for j, (r, kind, _) in enumerate(wk):
-        if kind != "album tile":
-            continue
-        size = int(ALBUM_TILE.fullmatch(plain(r.get("text"))).group(1))
-        hidden = size - 3
-        for near in walk_rows[position[id(r)] + 1:position[id(r)] + 3]:
-            m = re.fullmatch(r"\+\s*(\d+)", plain(near.get("text")))
-            if (near.get("resource_id") or "").endswith(":id/more") and m:
-                hidden = int(m.group(1))
-                break
-        album = next((ex[inverse[k]]["album"] for k in sorted(inverse, key=lambda k: abs(k - j))
-                      if ex[inverse[k]].get("album_size") == size), None)
-        if album is not None:
-            tiles.add(j)
-            unfound = [i for i, x in enumerate(ex) if x.get("album") == album and i not in pairs]
-            behind |= set(unfound[:max(0, hidden)])
-    found_at = {id(x): i for i, x in enumerate(ex)}
-    rows, counts = [], {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0,
-                            "missing": 0, "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}
+
+    counts = {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0, "missing": 0,
+                  "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}
+    results = {}   # id(export line) -> the fields of its row
+
+    def mark(x, result, wrow=None, direction="", note="", kind=None):
+        c = counts.get(kind or x["kind"])
+        f = {"result": result, "note": note}
+        if c is not None:
+            c["export"] += 1
+        if wrow is not None:
+            by_export = sent_by(x["author"])
+            agrees = ("yes" if direction == by_export else "NO") if direction else "no direction in the walk"
+            f.update(walk_line=wrow.get("line", ""), walk_direction=direction, direction_agrees=agrees,
+                     screenshot=wrow.get("screenshot", ""))
+            if c is not None:
+                c["found"] += 1
+                c["direction_right"] += direction == by_export
+                c["no_direction"] += not direction
+        elif c is not None:
+            c[{MISSING: "missing", NOT_WALKED: "not_walked", BEHIND_TILE: "behind_tile"}[result]] += 1
+        results[id(x)] = f
+
+    only = []   # (walk row, kind, direction, result) for lines the export does not have
+
+    def album_found(files, w, at_edge=False):
+        """An album lined up with the walk's: the files its grid shows are found while the walk has photos for them,
+        and missing after; as many as its last tile stands for are behind it; any more are missing. At an end of the
+        list the walk did not confirm reaching, the grid's photos the walk lacks may be past where it stopped, so
+        they are not walked, not missing (a walk that stopped half way up an album's grid: #62, found by testing
+        made-up chats). The walk's photos past those, and any photo written twice, are lines the export does not
+        have."""
+        hidden = w["hidden"] if w["tile"] is not None else 0
+        shown = max(0, w["size"] - hidden)
+        photos = [w["photos"][k] for k in sorted(w["photos"])]
+        n = min(len(photos), shown, len(files))
+        for idx, f in enumerate(files):
+            if idx < n:
+                mark(f, FOUND, photos[idx][0], photos[idx][1], ALBUM_NOTE)
+            elif idx >= shown and idx < shown + hidden:
+                mark(f, BEHIND_TILE, note=ALBUM_NOTE)
+            elif at_edge:
+                mark(f, NOT_WALKED, note=NOT_WALKED_NOTE)
+            else:
+                mark(f, MISSING, note=ALBUM_NOTE)
+        for r, d in photos[n:] + w["extra"]:
+            only.append((r, "picture", d, ONLY_WALK))
+        if w["tile"] is not None:
+            only.append((w["tile"], "album tile", w["direction"], TILE))
+
+    def single(f):
+        """A file of an album settled as a photo or video of its own."""
+        j = file_pairs.get(id(f))
+        if j is None:
+            mark(f, MISSING)
+        else:
+            mark(f, FOUND, W[j]["row"], W[j]["direction"])
+
+    for i, u in enumerate(E):
+        x = u["line"]
+        if u["kind"] == "album":
+            if i in pairs or i in as_album:
+                j = pairs.get(i, as_album.get(i))
+                results[id(x)] = {"result": ALBUM, "note": ""}
+                size = W[j]["size"]
+                album_found(u["files"][:size], W[j], at_edge=(i == first and oldest_unsure) or (i == last and newest_unsure))
+                for f in u["files"][size:]:
+                    single(f)
+            elif i in as_call:
+                j = as_call[i]
+                mark(x, FOUND, W[j]["row"], W[j]["direction"],
+                     "the export writes a call and an album's first line alike; the walk shows a call here", kind="call")
+                results[id(x)]["kind"] = "call"
+                for f in u["files"]:
+                    single(f)
+            else:
+                walked = not not_walked(i)
+                results[id(x)] = {"result": ALBUM, "note": "" if walked else NOT_WALKED_NOTE}
+                for f in u["files"]:
+                    if walked:
+                        mark(f, MISSING, note=ALBUM_NOTE)
+                    else:
+                        mark(f, NOT_WALKED, note=NOT_WALKED_NOTE)
+        elif i in pairs:
+            mark(x, FOUND, W[pairs[i]]["row"], W[pairs[i]]["direction"])
+        elif not_walked(i):
+            mark(x, NOT_WALKED, note=NOT_WALKED_NOTE)
+        elif i in by_card:
+            w = W[by_card[i]]
+            mark(x, FOUND, w["row"], w["direction"])
+            results[id(x)]["result"] = LINK_CARD
+        else:
+            mark(x, MISSING)
+
+    for j, w in enumerate(W):
+        if w["kind"] == "album":
+            if j in used:
+                continue
+            for r, d in [w["photos"][k] for k in sorted(w["photos"])] + w["extra"]:
+                only.append((r, "picture", d, ONLY_WALK))
+            if w["tile"] is not None:
+                only.append((w["tile"], "album tile", w["direction"], ONLY_WALK))
+        elif j not in used:
+            only.append((w["row"], w["kind"], w["direction"], CARD_LINE if j in card else ONLY_WALK))
+
+    rows = []
     for x in export_lines:
-        by_export = ("sent" if x["author"] == me else "received") if x["author"] else ""
-        row = {"export_line": x["n"], "kind": x["kind"], "author": x["author"], "direction_by_export": by_export,
+        row = {"export_line": x["n"], "kind": x["kind"], "author": x["author"], "direction_by_export": sent_by(x["author"]),
                "text": x["text"], "result": "", "walk_line": "", "walk_direction": "", "direction_agrees": "",
                "screenshot": "", "note": ""}
         if x["kind"] == "system":
             row["result"] = SYSTEM
-        elif x["kind"] == "album":
-            row["result"] = ALBUM
         elif x["kind"] == "attachment":
             row["result"] = OTHER_FILE
         else:
-            i = found_at[id(x)]
-            c = counts.get(x["kind"])
-            if c is not None:
-                c["export"] += 1
-            if i in pairs:
-                r, _, direction = wk[pairs[i]]
-                row.update(result=FOUND, walk_line=r.get("line", ""), walk_direction=direction,
-                           screenshot=r.get("screenshot", ""), note=ALBUM_NOTE if x.get("album") else "")
-                if not direction:
-                    row["direction_agrees"] = "no direction in the walk"
-                else:
-                    row["direction_agrees"] = "yes" if direction == by_export else "NO"
-                if c is not None:
-                    c["found"] += 1
-                    c["direction_right"] += direction == by_export
-                    c["no_direction"] += not direction
-            elif i in behind:
-                row["result"] = BEHIND_TILE
-                row["note"] = ALBUM_NOTE
-                if c is not None:
-                    c["behind_tile"] += 1
-            elif not_walked(i):
-                row["result"] = NOT_WALKED
-                row["note"] = "past the end of the list the walk did not confirm reaching"
-                if c is not None:
-                    c["not_walked"] += 1
-            elif i in by_card:
-                r, _, direction = wk[by_card[i]]
-                row.update(result=LINK_CARD, walk_line=r.get("line", ""), walk_direction=direction,
-                           screenshot=r.get("screenshot", ""))
-                row["direction_agrees"] = ("yes" if direction == by_export else "NO") if direction else "no direction in the walk"
-                if c is not None:
-                    c["found"] += 1
-                    c["direction_right"] += direction == by_export
-                    c["no_direction"] += not direction
-            else:
-                row["result"] = MISSING
-                if c is not None:
-                    c["missing"] += 1
+            row.update(results.get(id(x), {"result": MISSING}))
         rows.append(row)
-    for j, (r, kind, direction) in enumerate(wk):
-        if j in used:
-            continue
+    for r, kind, direction, result in only:
         c = counts.get(kind)
-        if c is not None and j not in card:
+        if c is not None and result == ONLY_WALK:
             c["only_walk"] += 1
         rows.append({"export_line": "", "kind": kind, "author": "", "direction_by_export": "", "text": plain(r.get("text")),
-                     "result": TILE if j in tiles else CARD_LINE if j in card else ONLY_WALK, "walk_line": r.get("line", ""),
-                     "walk_direction": direction, "direction_agrees": "", "screenshot": r.get("screenshot", ""), "note": ""})
+                     "result": result, "walk_line": r.get("line", ""), "walk_direction": direction, "direction_agrees": "",
+                     "screenshot": r.get("screenshot", ""), "note": ""})
     # A walk line found for an export line counts as the export's kind (a large emoji is described, not
     # written, and is still a text); one found for none counts as its own kind.
     for c in counts.values():
