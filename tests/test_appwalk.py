@@ -2118,5 +2118,52 @@ class PictureOverlapTests(unittest.TestCase):
         self.assertIsNone(transcript.picture_overlap(old, new, (0, 0, 400, 1000), "above"))
 
 
+class WhatsAppThumbTests(unittest.TestCase):
+    """WhatsApp 2.26.45.99 (Samsung SM-G990E and Xiaomi 22101316G, 21 and 22 November 2026) draws a video and each
+    photo of an album as a view "thumb" with a description, inside views with none; a shared location's map is a
+    "thumb" with no description. abrignoni/appwalk#61."""
+
+    def lines(self):
+        def node(rid, bounds, desc="", text="", inner=""):
+            return (f'<node class="android.view.View" package="com.whatsapp" resource-id="com.whatsapp:id/{rid}" '
+                    f'text="{text}" content-desc="{desc}" bounds="{bounds}">{inner}</node>')
+
+        def thumb(slot, bounds, desc):
+            return node(slot, bounds, inner=node("thumb", bounds, desc=desc))
+        # A received video at the very top of the list, as on the Samsung's first screenshot: its box starts at the
+        # list's edge, which is how uiautomator also gives a view the edge cuts off.
+        video = node("main_layout", "[51,267][829,1050]", inner=node("media_container", "[63,267][817,956]", inner=node(
+            "thumb", "[63,267][817,956]", desc="Video, HD, duration 5 segundos")) + node("caption", "[63,970][400,1040]", text="CE-10 Video"))
+        # A sent album of 6: three photos and a fourth tile, "+ 3", for the rest.
+        album = node("main_layout", "[251,1100][1029,1860]", inner=node("media_container", "[263,1110][1017,1850]", inner=node(
+            "media_grid", "[263,1110][1017,1850]", desc="Álbum de fotos, 6 elementos",
+            inner=thumb("thumb_0", "[263,1110][636,1476]", "Ver foto, 1 de 6") + thumb("thumb_1", "[644,1110][1017,1476]", "Ver foto, 2 de 6")
+            + thumb("thumb_2", "[263,1484][636,1850]", "Ver foto, 3 de 6")
+            + thumb("thumb_3", "[644,1484][1017,1850]", "Ver los 6 archivos multimedia")
+            + node("more", "[644,1484][1017,1850]", text="+ 3"))))
+        location = node("main_layout", "[51,1880][829,2180]", inner=node("map_frame", "[63,1890][817,2170]", inner=node(
+            "thumb", "[63,1890][817,2170]")))
+        tree = os.path.join(tempfile.mkdtemp(), "t.xml")
+        self.addCleanup(shutil.rmtree, os.path.dirname(tree))
+        write(tree, ('<?xml version="1.0"?><hierarchy><node class="androidx.recyclerview.widget.RecyclerView" '
+                     'package="com.whatsapp" resource-id="com.whatsapp:id/list" scrollable="true" bounds="[0,267][1080,2203]" '
+                     'text="" content-desc="">' + video + album + location + "</node></hierarchy>").encode("utf-8"))
+        prof = transcript.load_profile("com.whatsapp")
+        return [(x["text"], transcript.classify(x, prof)[:2]) for x in transcript.frame_lines(tree, "com.whatsapp", prof)]
+
+    def test_a_video_is_a_line_even_at_the_list_edge(self):
+        self.assertIn(("Video, HD, duration 5 segundos", ("described", "received")), self.lines())
+
+    def test_each_photo_of_an_album_is_a_line_and_the_tile_for_the_rest_too(self):
+        said = self.lines()
+        self.assertEqual([t for t, _ in said if t.startswith("Ver ")],
+                         ["Ver foto, 1 de 6", "Ver foto, 2 de 6", "Ver foto, 3 de 6", "Ver los 6 archivos multimedia"])
+        self.assertEqual({d for t, d in said if t.startswith("Ver ")}, {("described", "sent")})
+
+    def test_a_map_with_no_description_is_no_line(self):
+        # The described lines are the video and the album's four tiles; the map's "thumb" adds none.
+        self.assertEqual(sum(1 for _, (role, _) in self.lines() if role == "described"), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
