@@ -313,6 +313,9 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     """Rows for export_check.csv and counts per kind. The export's lines and the transcript's are lined up in
     order (difflib, without its junk rule: five voice notes look alike and must all count)."""
     oldest_unsure, newest_unsure = ends
+    # The owner's name as given is made plain like the export's names: a name with an emoji joined by U+200D, a
+    # direction mark or two spaces never matched otherwise (#62, found by testing made-up chats).
+    me = plain(me)
     export_lines = settle_albums(export_lines, walk_rows)
     ex = [x for x in export_lines if x["kind"] not in ("system", "album", "attachment")]
     wk = []
@@ -556,6 +559,7 @@ def write_rows(path, rows):
 def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, item=None, profile_folder=None):
     """Runs the check and writes its files. Returns (ok, lines): the summary, as it is printed."""
     import appwalk
+    me = plain(me)   # as the export's names are read, so the same name matches however it was typed
     if not os.path.exists(os.path.join(export, "manifest.json")):
         raise CheckStopped(f"{export} is not a finished AppWalk export: it has no manifest.json")
     with open(os.path.join(export, "manifest.json"), encoding="utf-8") as f:

@@ -2483,6 +2483,17 @@ class ExportCheckTests(unittest.TestCase):
             ok, lines = check_export.check(out, "Ana")
         self.assertFalse(ok)
 
+    def test_the_owners_name_matches_however_it_is_typed(self):
+        # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Lu \U0001F469\u200d\U0001F9B0: Hola\n")
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")], "Lu \U0001F469\u200d\U0001F9B0")
+        self.assertEqual(counts["text"]["direction_right"], 1)
+        _, counts = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")], "Lu  \u200f\U0001F469\U0001F9B0 ")
+        self.assertEqual(counts["text"]["direction_right"], 1)
+
     def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
         # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
         # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
