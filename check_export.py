@@ -302,15 +302,15 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     first = min(pairs) if pairs else None
     last = max(pairs) if pairs else None
     used = set(pairs.values())
-    # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
-    # so the walk has the card's lines where the export has the link. The walk's lines that no export line
-    # took, between the messages found just before and just after such a link, are taken as that card.
     def not_walked(i):
         """Past the first or last line found, at an end of the list the walk did not confirm reaching."""
         if first is None:
             return oldest_unsure or newest_unsure
         return (i < first and oldest_unsure) or (i > last and newest_unsure)
 
+    # A link sent on its own is shown as its preview card (title, snippet, address: section 14 of the manual),
+    # so the walk has the card's lines where the export has the link. The walk's lines that no export line
+    # took, between the messages found just before and just after such a link, are taken as that card.
     # A link in the part that was not walked has no card in the walk either (a walk with --stop-at on a Samsung
     # SM-G990E, 21 November 2026, called such a link's result a preview card).
     card = set()
