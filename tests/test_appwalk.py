@@ -2463,6 +2463,14 @@ class ExportCheckTests(unittest.TestCase):
             rows, counts = check_export.compare(export, walk, "Ana")
             self.assertEqual((counts["text"]["found"], counts["text"]["only_walk"]), (2, 1))
             self.assertFalse(check_export.passed(counts))
+        # A keycap emoji holds a digit and is still an emoji.
+        keycap = "3️⃣"
+        export2 = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            f"22/11/2026, 12:01 - Beto: {keycap}\n")
+        _, counts2 = check_export.compare(export2, [walk_row(k, "described", keycap, "received", rid="media_container")
+                                                   for k in (1, 2)], "Ana")
+        self.assertEqual((counts2["text"]["found"], counts2["text"]["only_walk"]), (1, 1))
         # A described line with words in it (a sticker, a GIF) is not a text.
         rows, counts = check_export.compare(export, walk[:2] + [walk_row(3, "described", "Sticker", "received", rid="media_container")], "Ana")
         self.assertTrue(check_export.passed(counts), counts)

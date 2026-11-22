@@ -240,8 +240,9 @@ def walk_kind(row):
         return "text", direction
     # A message of one emoji is drawn large and described, not written (the 👍 of the known-data chat). It is a text,
     # counted as one: a large emoji written twice in a walk passed while a text written twice failed (#62). Other
-    # descriptions (a sticker, a GIF) stay apart and are not counted.
-    if text and not any(ch.isalnum() for ch in text):
+    # descriptions (a sticker, a GIF) stay apart and are not counted. An emoji is known by having no letter: a keycap
+    # such as 3️⃣ holds a digit and was taken for a description (#62, found by testing made-up chats).
+    if text and not any(unicodedata.category(ch).startswith("L") for ch in text):
         return "text", direction
     return "described", direction
 
