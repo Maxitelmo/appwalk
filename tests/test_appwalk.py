@@ -2360,9 +2360,9 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(export, walk, "Ana")
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual((counts["call"]["export"], counts["call"]["found"], counts["call"]["direction_right"]), (2, 2, 2))
-        # The other way round: the walk on the phone that was called sees the same calls from the other side.
+        # With the wrong owner the calls' directions do not agree, and the check does not pass.
         _, counts = check_export.compare(export, walk, "Beto")
-        self.assertEqual(counts["call"]["direction_right"], 0)
+        self.assertFalse(check_export.passed(counts))
 
     def test_an_empty_message_before_an_album_is_the_album_not_a_call(self):
         # As both phones exported an album of 3 photos and then a call (22 November 2026): the empty line before the
@@ -2502,6 +2502,22 @@ class ExportCheckTests(unittest.TestCase):
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual([r["result"] for r in rows if r["kind"] == "text"],
                          [check_export.NOT_WALKED] * 3 + [check_export.FOUND])
+
+    def test_a_missing_line_is_not_taken_for_the_same_words_from_the_other_side(self):
+        # Found testing made-up chats for #62: the walk lacks Ana's "ok" and has Beto's. Lined up blind to direction,
+        # Ana's "ok" took Beto's (direction wrong) and Beto's came out missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Ana: ok\n"
+            "22/11/2026, 12:01 - Beto: ok\n")
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "ok", "received")], "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"], counts["text"]["missing"]), (1, 1, 1))
+        self.assertEqual([(r["author"], r["result"]) for r in rows if r["kind"] == "text"],
+                         [("Ana", check_export.MISSING), ("Beto", check_export.FOUND)])
+        # A line the walk has with the wrong direction is still found, and said to be wrong.
+        rows, counts = check_export.compare(export[:2], [walk_row(1, "message", "ok", "received")], "Ana")
+        self.assertEqual([r["direction_agrees"] for r in rows if r["kind"] == "text"], ["NO"])
 
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.

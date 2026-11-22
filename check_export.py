@@ -300,6 +300,19 @@ def line_up(a, b, from_end=False):
     return pairs
 
 
+def line_up_by_direction(a, b, a_dir, b_dir, from_end=False):
+    """line_up, with the lines' directions part of what they must share, then without them in each stretch between
+    the lines that matched."""
+    pairs = line_up([k + (d,) for k, d in zip(a, a_dir)], [k + (d,) for k, d in zip(b, b_dir)], from_end)
+    bounds = [(-1, -1)] + sorted(pairs.items()) + [(len(a), len(b))]
+    for (i0, j0), (i1, j1) in zip(bounds, bounds[1:]):
+        ga, gb = list(range(i0 + 1, i1)), list(range(j0 + 1, j1))
+        if ga and gb:
+            more = line_up([a[i] for i in ga], [b[j] for j in gb], from_end)
+            pairs.update({ga[i]: gb[j] for i, j in more.items()})
+    return pairs
+
+
 def settle_albums(export_lines, walk_rows):
     """The export's lines, with each album the walk does not show taken back to what it then is: a call, and photos
     and videos of their own. The export writes an album's line and a call alike, as an empty message, so a call
@@ -348,7 +361,13 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # A walk that did not reach the oldest end (--stop-at) covers the newest part, so the line-up starts from the
     # newest end: from the oldest, a line said often ("ok") was found in its oldest copies and the newest ones the
     # walk shows came out missing (#62, found by testing made-up chats).
-    pairs = line_up(a, b, from_end=oldest_unsure and not newest_unsure)
+    # Lined up with each line's direction first, and then without it only in the stretches still unmatched: blind
+    # to direction, an "ok" of the owner's that the walk lacks took the other's "ok", which came out as a wrong
+    # direction plus a missing line of the other's (#62, found by testing made-up chats). A line whose direction is
+    # wrong is still found in the second pass, and still said to be wrong.
+    a_dir = [("sent" if x["author"] == me else "received") if x["author"] else "" for x in ex]
+    b_dir = [direction for _, _, direction in wk]
+    pairs = line_up_by_direction(a, b, a_dir, b_dir, from_end=oldest_unsure and not newest_unsure)
     first = min(pairs) if pairs else None
     last = max(pairs) if pairs else None
     used = set(pairs.values())
