@@ -427,7 +427,9 @@ export does not (a voice note written twice is caught that way). The export also
 an empty message, followed by its photos and videos from the same sender at the same minute: that
 line is the album, not a call, and is not counted. An album with more files than its grid shows has a
 last tile, "+ 3", over the rest: the walk cannot show those, so the export's files of that album it
-did not find are "behind the album's last tile", not missing. A link sent on its own is shown by
+did not find are "behind the album's last tile", not missing. The walk shows an album's photos as "Ver
+foto, 1 de 6" and the export lists their files in an order of its own, so an album's lines are counts:
+each says it is one of the album's photos, not which file. A link sent on its own is shown by
 WhatsApp as its preview card, so it gets its own result and the card's lines are not counted. System
 lines (group created, the encryption notice) are listed, not counted. When the walk did not confirm
 reaching an end of the list (`--stop-at`, a cap), the export's lines past the first or last one found

@@ -59,6 +59,10 @@ OTHER_FILE = "attachment of another kind (not compared)"
 ALBUM = "album: the photos and videos after it are its own lines (not counted)"
 BEHIND_TILE = "behind the album's last tile: the walk shows the album's first files only (not counted as missing)"
 TILE = "the album's last tile, standing for the files it does not show (not counted)"
+# The walk shows an album's photos as "Ver foto, 1 de 6" and the export lists their files in an order of its own
+# (IMG-…-WA0003, WA0008, WA0004 for photos 1 to 3 of an album of 6, 22 November 2026), so a found or hidden photo
+# of an album is one of the album's files, counted, not that file.
+ALBUM_NOTE = "matched as one of the album's photos; the walk does not say which file"
 # A photo of an album, and the last tile of an album with more files than its grid shows, as WhatsApp 2.26.45.99
 # describes them (es-US).
 ALBUM_PHOTO = re.compile(r"Ver foto, \d+ de (\d+)")
@@ -356,7 +360,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
             if i in pairs:
                 r, _, direction = wk[pairs[i]]
                 row.update(result=FOUND, walk_line=r.get("line", ""), walk_direction=direction,
-                           screenshot=r.get("screenshot", ""))
+                           screenshot=r.get("screenshot", ""), note=ALBUM_NOTE if x.get("album") else "")
                 if not direction:
                     row["direction_agrees"] = "no direction in the walk"
                 else:
@@ -367,6 +371,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                     c["no_direction"] += not direction
             elif i in behind:
                 row["result"] = BEHIND_TILE
+                row["note"] = ALBUM_NOTE
                 if c is not None:
                     c["behind_tile"] += 1
             elif not_walked(i):

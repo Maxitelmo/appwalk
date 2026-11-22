@@ -2411,6 +2411,22 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(export, walk[:2] + walk[3:], "Ana")
         self.assertEqual((counts["picture"]["missing"], counts["picture"]["behind_tile"]), (1, 3))
 
+    def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
+        # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
+        # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Ana: \u200eIMG-20261121-WA0008.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7)))
+        walk = ([walk_row(1, "described", "Agrandar foto", "sent", rid="image")]
+                + [walk_row(1 + k, "described", f"Ver foto, {k} de 6", "received", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(5, "described", "Ver los 6 archivos multimedia", "received", rid="thumb")])
+        rows, _ = check_export.compare(export, walk, "Ana")
+        notes = {r["text"]: (r["result"], r["note"]) for r in rows if r["kind"] == "picture"}
+        self.assertEqual(notes["IMG-20261121-WA0008.jpg"], (check_export.FOUND, ""))
+        self.assertEqual({n for t, (_, n) in notes.items() if "20261122" in t}, {check_export.ALBUM_NOTE})
+
     def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
         import check_export
         out = self.export_with_chat()
