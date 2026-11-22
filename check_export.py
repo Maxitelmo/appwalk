@@ -55,6 +55,7 @@ SYSTEM = "system line (not counted)"
 LINK_CARD = "link sent alone: WhatsApp shows a preview card, not the typed link (not counted)"
 CARD_LINE = "only in the walk, where the export has a link sent alone: taken as its preview card (not counted)"
 OTHER_FILE = "attachment of another kind (not compared)"
+ALBUM = "album: the photos and videos after it are its own lines (not counted)"
 # The kinds that are counted, in the order the summary gives them.
 KINDS = ["text", "caption", "voice note", "picture", "video", "deleted", "call"]
 PLURAL = {"text": "texts", "caption": "captions", "voice note": "voice notes", "picture": "pictures", "video": "videos",
@@ -134,18 +135,41 @@ def parse_export(text):
                 # the one who called (Samsung SM-G990E and Xiaomi 22101316G, WhatsApp 2.26.45.99, 21 November
                 # 2026: "21/11/2026, 19:28 - Maxi: "). The space after the colon was stripped with the line's end.
                 author, sep, body = rest[:-1], ":", ""
-            messages.append({"n": n, "author": author.strip() if sep else "", "body": body if sep else rest})
+            messages.append({"n": n, "author": author.strip() if sep else "", "body": body if sep else rest,
+                             "stamp": m.groups()[:6]})
         elif messages:
             messages[-1]["body"] += "\n" + line
+    def tidy(msg):
+        return "\n".join(x.strip() for x in msg["body"].replace("\u200e", "").split("\n")).strip()
+
+    def is_photo_or_video(msg):
+        att = ATTACHED.match(plain(tidy(msg).partition("\n")[0]))
+        return bool(att) and att.group(1).upper().startswith(("IMG-", "VID-"))
+
+    def album_files(i):
+        """How many photos and videos follow message i from the same sender at the same minute."""
+        k = i + 1
+        while (k < len(messages) and messages[k]["author"] == messages[i]["author"]
+               and messages[k]["stamp"] == messages[i]["stamp"] and is_photo_or_video(messages[k])):
+            k += 1
+        return k - i - 1
+
     out = []
-    for msg in messages:
+    for i, msg in enumerate(messages):
         n, author = msg["n"], msg["author"]
-        body = "\n".join(x.strip() for x in msg["body"].replace("\u200e", "").split("\n")).strip()
+        body = tidy(msg)
         if not author:
             out.append({"n": n, "author": "", "kind": "system", "text": plain(body), "file": ""})
             continue
         if not plain(body):
-            out.append({"n": n, "author": author, "kind": "call", "text": "", "file": ""})
+            # An empty message is also how the export starts an album: the photos and videos follow it from the same
+            # sender at the same minute (Samsung SM-G990E and Xiaomi 22101316G, 22 November 2026: an album of 3 and
+            # one of 6). With none after it, it is a call.
+            files = album_files(i)
+            if files >= 2:
+                out.append({"n": n, "author": author, "kind": "album", "text": f"{files} files", "file": ""})
+            else:
+                out.append({"n": n, "author": author, "kind": "call", "text": "", "file": ""})
             continue
         first_line, _, more = body.partition("\n")
         att = ATTACHED.match(plain(first_line))
@@ -236,7 +260,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     """Rows for export_check.csv and counts per kind. The export's lines and the transcript's are lined up in
     order (difflib, without its junk rule: five voice notes look alike and must all count)."""
     oldest_unsure, newest_unsure = ends
-    ex = [x for x in export_lines if x["kind"] not in ("system", "attachment")]
+    ex = [x for x in export_lines if x["kind"] not in ("system", "album", "attachment")]
     wk = []
     for r in walk_rows:
         k = walk_kind(r)
@@ -279,6 +303,8 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                "screenshot": "", "note": ""}
         if x["kind"] == "system":
             row["result"] = SYSTEM
+        elif x["kind"] == "album":
+            row["result"] = ALBUM
         elif x["kind"] == "attachment":
             row["result"] = OTHER_FILE
         else:
@@ -494,7 +520,9 @@ def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, it
     system = sum(1 for x in lines if x["kind"] == "system")
     other = sum(1 for x in lines if x["kind"] == "attachment")
     links = sum(1 for x in lines if x["kind"] == "link")
-    out.append(f"{len({x['n'] for x in lines if x['kind'] != 'system'})} messages in the export, {system} system line(s)"
+    albums = sum(1 for x in lines if x["kind"] == "album")
+    out.append(f"{len({x['n'] for x in lines if x['kind'] not in ('system', 'album')})} messages in the export, "
+               f"{system} system line(s)" + (f", {albums} album(s)" if albums else "")
                + (f", {links} link(s) sent alone" if links else "") + (f", {other} other attachment(s) not compared" if other else ""))
     out += [("ok      " if good else "WARNING ") + t for good, t in count_lines(counts)]
 

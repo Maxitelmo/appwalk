@@ -2364,6 +2364,26 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(export, walk, "Beto")
         self.assertEqual(counts["call"]["direction_right"], 0)
 
+    def test_an_empty_message_before_an_album_is_the_album_not_a_call(self):
+        # As both phones exported an album of 3 photos and then a call (22 November 2026): the empty line before the
+        # album's photos, same sender and minute, starts the album.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0000.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:06 - Ana: \n"
+            "22/11/2026, 12:07 - Beto: \n"
+            "22/11/2026, 12:07 - Ana: \u200eIMG-20261122-WA0003.jpg (archivo adjunto)\n")
+        self.assertEqual([(x["n"], x["kind"]) for x in export],
+                         [(1, "system"), (2, "album"), (3, "picture"), (4, "picture"), (5, "picture"), (6, "call"),
+                          (7, "call"), (8, "picture")])   # 7: Beto's empty line is not followed by Beto's photos
+        rows, counts = check_export.compare(export, [], "Ana")
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "album"], [check_export.ALBUM])
+        self.assertEqual((counts["call"]["export"], counts["picture"]["export"]), (2, 4))
+
     def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
         import check_export
         out = self.export_with_chat()
