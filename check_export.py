@@ -83,7 +83,9 @@ START = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2,4}),? (\d{1,2}):(\d{2})(?: ?([ap
 # iOS writes "[14/11/26, 3:22:05 a. m.] Name: text"; not tried, so it is recognised only to say so.
 IOS_START = re.compile(r"^\[\d{1,2}/\d{1,2}/\d{2,4},? \d{1,2}:\d{2}:\d{2}")
 ATTACHED = re.compile(r"^(\S+\.\w+) \(archivo adjunto\)$")
-LINK_ALONE = re.compile(r"^https?://\S+$")
+# A link alone, with or without its scheme ("www.github.com/x"), the scheme in any case (#62, found by testing
+# made-up chats).
+LINK_ALONE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
 # A deleted message, as the export writes it for the exporting phone's own and for the others', and as a walk
 # reads it on either side (moto g47 and Samsung SM-G990E, WhatsApp 2.26.44.90, es-US, 14 November 2026).
 DELETED_OWN, DELETED_OTHERS = "Eliminaste este mensaje.", "Se eliminó este mensaje."
@@ -222,6 +224,10 @@ def walk_kind(row):
     rid = (row.get("resource_id") or "").split(":id/")[-1]
     role, text = row.get("role"), plain(row.get("text"))
     direction = row.get("direction") or ""
+    if rid in ("title", "snippet", "url") and role == "other":
+        # A link's preview card: its title, snippet and address, which the profile leaves as other text. It counts
+        # only as the card of a link the walk has no line for (#62: a real card was never seen).
+        return "card", {"right": "sent", "left": "received"}.get(row.get("side") or "", "")
     if rid == "call_log_title":
         # A call is a line of its own in the chat ("Llamada", "Videollamada perdida"), which the profile leaves as
         # other text. Who called is the side it sits on, as for a message.
@@ -431,6 +437,8 @@ def export_units(export_lines):
 
 
 def unit_key(u):
+    if u["kind"] == "card":
+        return ("card", id(u))   # a card's line lines up with no export line
     if u["kind"] == "album":
         return ("album", u["size"])
     return key(u["kind"], u.get("text"))
@@ -518,18 +526,27 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # Without that address any line there was taken as the card: a voice note written twice, a photo, another link
     # (#62, found by testing made-up chats). A link in the part that was not walked has no card in the walk either
     # (a walk with --stop-at on a Samsung SM-G990E, 21 November 2026, called such a link's result a preview card).
-    card, by_card = set(), {}
+    # Links that share a stretch take their cards in order, each up to the line that holds its own address, which
+    # must stand as a whole name ("x.com" is not in "netflix.com"); two links in a row took one card, or none (#62,
+    # found by testing made-up chats). A card the walk shows at an end it did not confirm reaching was walked, so it
+    # is looked for there too (a link whose card was the walk's last line was called not walked: #62).
+    card, by_card, start = set(), {}, {}
     for i, u in enumerate(E):
-        if u["kind"] != "link" or i in pairs or not_walked(i):
+        if u["kind"] != "link" or i in pairs:
             continue
         before = max((pairs[p] for p in pairs if p < i), default=-1)
         after = min((pairs[q] for q in pairs if q > i), default=len(W))
-        host = (urllib.parse.urlsplit(u["text"]).hostname or "").removeprefix("www.")
-        lines = [j for j in range(before + 1, after) if j not in used and j not in card and W[j]["kind"] == "text"]
-        holds = [j for j in lines if host and host in W[j]["text"].lower()]
-        if holds and len(lines) <= 3:
-            card |= set(lines)
-            by_card[i] = holds[0]
+        text = u["text"] if "://" in u["text"] else "http://" + u["text"]
+        host = (urllib.parse.urlsplit(text).hostname or "").removeprefix("www.")
+        at = re.compile(r"(?<![\w.-])(?:[\w-]+\.)*" + re.escape(host) + r"(?![\w-])") if host else None
+        lines = [j for j in range(max(before + 1, start.get(before, 0)), after)
+                 if j not in used and j not in card and W[j]["kind"] in ("text", "card")]
+        holds = next((n for n, j in enumerate(lines) if at and at.search(W[j]["text"].lower())), None)
+        if holds is not None:
+            taken = lines[max(0, holds - 2):holds + 1]
+            card |= set(taken)
+            by_card[i] = lines[holds]
+            start[before] = lines[holds] + 1
 
     counts = {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0, "missing": 0,
                   "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}
@@ -611,12 +628,12 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
             results[id(x)]["kind"] = "call"
         elif i in pairs:
             mark(x, FOUND, W[pairs[i]]["row"], W[pairs[i]]["direction"])
-        elif not_walked(i):
-            mark(x, NOT_WALKED, note=NOT_WALKED_NOTE)
         elif i in by_card:
             w = W[by_card[i]]
             mark(x, FOUND, w["row"], w["direction"])
             results[id(x)]["result"] = LINK_CARD
+        elif not_walked(i):
+            mark(x, NOT_WALKED, note=NOT_WALKED_NOTE)
         else:
             mark(x, MISSING)
 
@@ -628,8 +645,10 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                 only.append((r, "picture", d, ONLY_WALK))
             if w["tile"] is not None:
                 only.append((w["tile"], "album tile", w["direction"], ONLY_WALK))
-        elif j not in used:
-            only.append((w["row"], w["kind"], w["direction"], CARD_LINE if j in card else ONLY_WALK))
+        elif j in card:
+            only.append((w["row"], w["kind"], w["direction"], CARD_LINE))
+        elif j not in used and w["kind"] != "card":
+            only.append((w["row"], w["kind"], w["direction"], ONLY_WALK))
 
     rows = []
     for x in export_lines:

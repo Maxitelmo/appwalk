@@ -2286,14 +2286,15 @@ class ExportCheckTests(unittest.TestCase):
             "1/12/26, 9:01 - Ana: Hola\n"
             "1/12/26, 9:02 - Beto: https://example.com/x\n"
             "1/12/26, 9:03 - Beto: Chau\n")
+        # As on the Samsung: the walk stopped below the link and shows nothing of it.
         walk = [walk_row(1, "message", "a line the export does not have", "received"),
-                walk_row(1, "message", "example.com", "received"),
                 walk_row(2, "message", "Chau", "received")]
         rows, _ = check_export.compare(export, walk, "Ana", ends=(True, False))
         by_text = {r["text"]: r["result"] for r in rows}
         self.assertEqual(by_text["https://example.com/x"], check_export.NOT_WALKED)
         self.assertEqual(by_text["a line the export does not have"], check_export.ONLY_WALK)   # not taken as a card
         # Inside the part walked, the link keeps its own result and the lines around it are its card.
+        walk.insert(1, walk_row(1, "message", "example.com", "received"))
         rows, _ = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")] + walk, "Ana")
         by_text = {r["text"]: r["result"] for r in rows}
         self.assertEqual(by_text["https://example.com/x"], check_export.LINK_CARD)
@@ -2682,6 +2683,31 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (1, 0))   # photo 2 skipped
         _, counts = check_export.compare(three, [g[2], walk_row(9, "message", "Hola", "received")], "Ana", ends=(True, False))
         self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (0, 2))   # 1 and 2 above
+
+    def test_a_link_card_as_whatsapp_shows_it(self):
+        # Found testing made-up chats for #62, round two. WhatsApp's card is title, snippet and url lines with role
+        # other, which were never seen; two links in a row took one card; "x.com" was found in "netflix.com"; a link
+        # with no scheme was not a link.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        card = lambda title, host: [walk_row(2, "other", title, rid="title", side="left"),
+                                    walk_row(2, "other", host, rid="url", side="left")]
+        chau = walk_row(3, "message", "Chau", "received")
+        one = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        rows, counts = check_export.compare(one, card("GitHub - x", "github.com") + [chau], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "link"], [check_export.LINK_CARD])
+        two = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://github.com/x\n"
+                                        "1/12/26, 9:02 - Beto: https://example.org/y\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(two, card("GitHub - x", "github.com") + card("Example", "example.org") + [chau], "Ana")
+        self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (2, 0))
+        x = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://x.com/abc\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(x, card("Netflix", "netflix.com") + [chau], "Ana")
+        self.assertEqual(counts["link"]["missing"], 1)
+        bare = check_export.parse_export(head + "1/12/26, 9:02 - Beto: www.github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        self.assertEqual(bare[1]["kind"], "link")
+        _, counts = check_export.compare(bare, card("GitHub", "github.com") + [chau], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
 
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.

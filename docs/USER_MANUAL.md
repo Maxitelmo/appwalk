@@ -436,8 +436,10 @@ not find as the tile stands for are "behind the album's last tile", not missing;
 The walk shows an album's photos as "Ver
 foto, 1 de 6" and the export lists their files in an order of its own, so an album's lines are counts:
 each says it is one of the album's photos, not which file. A link sent on its own is counted: it is
-found by its text, or, when WhatsApp shows only its preview card, by up to three text lines where it
-belongs, one of them holding the link's address ("github.com"); the card's lines are not counted. System
+found by its text, or, when WhatsApp shows only its preview card (its title, snippet and address), by
+up to three lines of that card where it belongs, ending with the one holding the link's own address
+("github.com"); two links in a row each take their own card, and the card's lines are not counted. A
+link written without "https://" ("www.github.com/x") is a link too. System
 lines (group created, the encryption notice) are listed, not counted. When the walk did not confirm
 reaching an end of the list (`--stop-at`, a cap), the export's lines past the first or last one found
 there are "not walked", not "missing". Times are not compared.
