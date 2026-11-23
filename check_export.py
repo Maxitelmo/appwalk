@@ -375,14 +375,21 @@ def walk_units(wk, walk_rows):
             album = None
             continue
         size = int(photo.group(2)) if photo else int(tile.group(1))
-        complete = album is not None and (album["tile"] is not None or (album["size"] <= 4 and len(album["photos"]) >= album["size"]))
-        if album is None or album["size"] != size or complete:
+        k = int(photo.group(1)) if photo else None
+        # An album is done when its grid is: a tile and the three photos beside it, or all of its four or fewer
+        # photos. A tile read before photo 3 did not end it (photo 3 then started an album of its own); an album of
+        # the other sender, or a grid starting again at photo 1, starts another (two albums of 3 in a row, the first
+        # missing a photo, became one; #62, found by testing made-up chats).
+        done = album is not None and len(album["photos"]) >= (3 if album["size"] > 4 else album["size"]) and (
+            album["size"] <= 4 or album["tile"] is not None)
+        other = album is not None and direction and album["dirs"] and direction not in album["dirs"]
+        again = album is not None and k == 1 and 1 in album["photos"]
+        if album is None or album["size"] != size or done or other or again or (tile and album["tile"] is not None):
             album = {"kind": "album", "size": size, "photos": {}, "extra": [], "tile": None, "hidden": 0, "dirs": [],
                      "row": r, "text": text}
             units.append(album)
         album["dirs"].append(direction)
         if photo:
-            k = int(photo.group(1))
             if k in album["photos"]:
                 album["extra"].append((r, direction))
             else:

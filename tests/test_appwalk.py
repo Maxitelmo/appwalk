@@ -2649,6 +2649,23 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(call, reversed_walk, "Ana")
         self.assertFalse(check_export.passed(counts))
 
+    def test_a_walk_album_ends_with_its_grid_its_sender_or_a_new_photo_1(self):
+        # Found testing made-up chats for #62, round two: two albums of 3 in a row, the first missing photo 3, became
+        # one album; a tile read before photo 3 ended the album; an album with no tile ran into the next one.
+        import check_export
+        ab = self.album_chat(("Ana", 5, 3), ("Beto", 6, 3))
+        _, counts = check_export.compare(ab, self.grid(3, "sent", shown=2) + self.grid(3, "received", 5), "Ana")
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
+                          counts["picture"]["only_walk"]), (5, 5, 1, 0))
+        six = self.album_chat(("Beto", 5, 6))
+        g = self.grid(6, "received")
+        _, counts = check_export.compare(six, g[:2] + g[3:] + g[2:3], "Ana")        # 1, 2, the tile and "+ 3", then 3
+        self.assertTrue(check_export.passed(counts), counts)
+        sixes = self.album_chat(("Beto", 5, 6), ("Ana", 6, 6))
+        _, counts = check_export.compare(sixes, self.grid(6, "received")[:3] + self.grid(6, "sent", 10), "Ana")
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
+                          counts["picture"]["behind_tile"]), (6, 6, 3, 3))
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export
