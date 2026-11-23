@@ -2777,6 +2777,20 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(two, card("github.com") + [found], "Ana")
         self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (1, 1))                  # b's card is b's
 
+    def test_a_text_with_a_link_owns_its_card(self):
+        # Found testing made-up chats for #62, last round: a text with words and a link has a preview card too, and
+        # the export calls it a text. Its card was counted as a link the export does not have.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        chat = check_export.parse_export(head + "1/12/26, 9:01 - Ana: Hola\n1/12/26, 9:02 - Beto: mira esto https://example.com/x\n"
+                                                "1/12/26, 9:03 - Beto: Chau\n")
+        walk = [walk_row(1, "message", "Hola", "sent"), walk_row(2, "other", "Example Domain", rid="title", side="left"),
+                walk_row(2, "other", "example.com", rid="url", side="left"),
+                walk_row(2, "message", "mira esto https://example.com/x", "received"), walk_row(3, "message", "Chau", "received")]
+        _, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["text"]["found"], counts["link"]["only_walk"]), (3, 0))
+
     def test_a_caption_follows_its_own_file_in_every_reading(self):
         # Found testing made-up chats for #62, round three: read as a call with photos, or as a smaller album and a
         # photo, an album's captions stayed after all its files, while the walk shows each under its own photo; and

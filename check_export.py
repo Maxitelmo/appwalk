@@ -86,6 +86,7 @@ ATTACHED = re.compile(r"^(\S+\.\w+) \(archivo adjunto\)$")
 # A link alone, with or without its scheme ("www.github.com/x"), the scheme in any case (#62, found by testing
 # made-up chats).
 LINK_ALONE = re.compile(r"^(?:https?://|www\.)\S+$", re.I)
+LINK_IN = re.compile(r"(?<!\S)(?:https?://|www\.)\S+", re.I)
 # A deleted message, as the export writes it for the exporting phone's own and for the others', and as a walk
 # reads it on either side (moto g47 and Samsung SM-G990E, WhatsApp 2.26.44.90, es-US, 14 November 2026).
 DELETED_OWN, DELETED_OTHERS = "Eliminaste este mensaje.", "Se eliminó este mensaje."
@@ -651,7 +652,10 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
             while k + 1 < len(W) and W[k + 1]["kind"] == "card" and not (W[k]["row"].get("resource_id") or "").endswith(":id/url"):
                 k += 1
             after = W[k + 1] if k + 1 < len(W) else None
-            owned = after is not None and (k + 1) in used and LINK_ALONE.match(after.get("text") or "")
+            # A text with words and a link has a card too, and the export calls it a text: its card was counted as a
+            # link the export does not have, and a walk that matched the chat failed (#62, found by testing made-up
+            # chats).
+            owned = after is not None and (k + 1) in used and LINK_IN.search(after.get("text") or "")
             if not owned:
                 runs.append(list(range(j, k + 1)))
             j = k + 1
