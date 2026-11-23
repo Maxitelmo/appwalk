@@ -2915,6 +2915,9 @@ class ExportCheckTests(unittest.TestCase):
             f.write(check_export.csv_text([{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows], transcript.COLUMNS))
         from unittest import mock
         built = [{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows]
+        # The counts on the file left by an earlier check, when it differed, go (found testing, last round).
+        with open(os.path.join(out, check_export.FILE_CSV_NAME), "w", encoding="utf-8") as f:
+            f.write("export_line,result\n2,missing\n")
         with mock.patch.object(transcript, "build", lambda export, folder=None: (built, [], {})):
             ok, lines = check_export.check(out, "Ana")
         self.assertTrue(ok, lines)

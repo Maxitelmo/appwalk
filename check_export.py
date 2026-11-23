@@ -1026,6 +1026,10 @@ def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, it
     out += [("ok      " if good else "WARNING ") + t for good, t in count_lines(counts)]
 
     path = os.path.join(export, "transcript.csv")
+    # The counts on the file are written only when it differs; one left by an earlier check, before attach wrote
+    # transcript.csv again, still showed lines missing beside a summary that passed (#62, found by testing).
+    if os.path.exists(os.path.join(export, FILE_CSV_NAME)):
+        os.remove(os.path.join(export, FILE_CSV_NAME))
     if not os.path.exists(path):
         out.append("transcript.csv: not in the export")
     else:

@@ -452,8 +452,8 @@ folder, outside the hash chain and the report. The summary gives AppWalk's versi
 hash, because the result depends on the code and the profile, and a taught profile is outside the
 chain. The two files are hashed with LF line endings, as the repository holds them, so the same file
 gives the same hash on Windows, where Git checks it out with CRLF, as on macOS and Linux. The check uses the transcript as this AppWalk builds it now. If `transcript.csv` in the export
-differs, it says so and gives the same counts for the file, in `export_check_of_transcript_csv.csv`.
-When they agree, that says nothing about what the walk first wrote: `attach` writes `transcript.csv`
+differs, it says so and gives the same counts for the file, in `export_check_of_transcript_csv.csv`
+(a check where they agree removes one an earlier check left). When they agree, that says nothing about what the walk first wrote: `attach` writes `transcript.csv`
 again with the AppWalk that runs it.
 
 It exits with 0 when everything agrees, 1 when something differs and 2 when it could not check.
