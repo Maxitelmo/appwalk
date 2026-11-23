@@ -567,8 +567,17 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         out.append([call] + alone(u["files"]))
         return out
 
-    def score(eu, got):
-        return len(got), sum(1 for i, j in got.items() if W[j]["direction"] and W[j]["direction"] == sent_by(eu[i]["author"]))
+    def score(eu, got, oldest=True, newest=True):
+        """Lines lined up, then directions that agree, then the fewest export units left missing. With an end the walk
+        did not confirm reaching, the units past the first or last one found there are not walked, not missing: a
+        walk that stopped short lined its call and photos, or an album, up with older ones in the part not walked as
+        well as with the newest, and the older left the messages between as missing (#62, found by testing made-up
+        chats). oldest and newest say whether the units scored reach that end of the chat."""
+        lo, hi = (min(got), max(got)) if got else (len(eu), -1)
+        missing = sum(1 for i in range(len(eu)) if i not in got and not (oldest and oldest_unsure and i < lo)
+                      and not (newest and newest_unsure and i > hi))
+        return (len(got), sum(1 for i, j in got.items() if W[j]["direction"] and W[j]["direction"] == sent_by(eu[i]["author"])),
+                -missing)
 
     # Each round tries every reading of every album and keeps the ones that line up the most: taking the first that
     # helped read a real album of 2 as a call, where the call and its photos were the next one (#62). A reading is
@@ -595,25 +604,29 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                 continue
             span = 1 + len(u["captions"])
             lo, hi, wlo, whi = stretch(i, span)
-            here = score(E[lo:hi], line_up_units(E[lo:hi], W[wlo:whi]))
+            ends_here = (lo == 0, hi == len(E))
+            here = score(E[lo:hi], line_up_units(E[lo:hi], W[wlo:whi]), *ends_here)
             for reading in readings(u):
                 trial = E[lo:i] + reading + E[i + span:hi]
-                got = score(trial, line_up_units(trial, W[wlo:whi]))
+                got = score(trial, line_up_units(trial, W[wlo:whi]), *ends_here)
                 if got > here:
-                    gains.append((got[0] - here[0], got[1] - here[1], -i, i, span, lo, hi, reading))
+                    # On a tie the album nearest the end the walk reached goes first (the oldest went first, and a walk
+                    # that stopped short took an album in the part it did not walk: #62).
+                    gains.append((got[0] - here[0], got[1] - here[1], got[2] - here[2], i if oldest_unsure else -i,
+                                  i, span, lo, hi, reading))
                     here = got
         if not gains:
             break
         chosen, taken = [], []
-        for g in sorted(gains, key=lambda g: g[:3], reverse=True):
-            if all(g[6] <= lo or g[5] >= hi for lo, hi in taken):
+        for g in sorted(gains, key=lambda g: g[:4], reverse=True):
+            if all(g[7] <= lo or g[6] >= hi for lo, hi in taken):
                 chosen.append(g)
-                taken.append((g[5], g[6]))
+                taken.append((g[6], g[7]))
         moved = False
         for group in (chosen, chosen[:1]):   # all at once, or failing that the best alone
             trial = list(E)
-            for g in sorted(group, key=lambda g: g[3], reverse=True):
-                trial[g[3]:g[3] + g[4]] = g[7]
+            for g in sorted(group, key=lambda g: g[4], reverse=True):
+                trial[g[4]:g[4] + g[5]] = g[8]
             got = line_up_units(trial, W)
             if score(trial, got) > best:
                 best, E, pairs, moved = score(trial, got), trial, got, True

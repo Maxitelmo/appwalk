@@ -2676,6 +2676,33 @@ class ExportCheckTests(unittest.TestCase):
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual((counts["picture"]["found"], counts["picture"]["missing"], counts["call"]["export"]), (15, 0, 0))
 
+    def test_a_walk_that_stopped_short_reads_the_albums_it_reached(self):
+        # Found testing made-up chats for #62, last round: with the oldest end unsure, an album of 3 and a photo sent
+        # alone (an album of 4 in the export) was read in an older album of 4 the walk never reached, and a call with
+        # two photos sent apart was lined up with an older call and photos; what lay between came out missing.
+        import check_export
+        single = lambda n: walk_row(n, "described", "Agrandar foto", "sent", rid="image")
+        chau = walk_row(9, "message", "Chau", "received")
+        img = lambda minute, k: f"22/11/2026, 12:{minute:02d} - Ana: \u200eIMG-20261122-WA{k:04d}.jpg (archivo adjunto)\n"
+        chat = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:01 - Ana: \n" + "".join(img(1, k) for k in range(4))                 # not walked
+            + "".join(f"22/11/2026, 12:{2 + k:02d} - Beto: mensaje {k}\n" for k in range(5))
+            + "22/11/2026, 12:10 - Ana: \n" + "".join(img(10, k) for k in range(10, 14))          # 3 and 1 alone
+            + "22/11/2026, 12:11 - Beto: Chau\n")
+        _, counts = check_export.compare(chat, self.grid(3, "sent") + [single(4), chau], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["text"]["not_walked"]), (4, 4, 5))
+        calls = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:01 - Ana: \n22/11/2026, 12:02 - Beto: no te escuchaba\n" + img(3, 0) + img(4, 1)
+            + "22/11/2026, 12:05 - Beto: que lindas\n22/11/2026, 12:10 - Ana: \n" + img(10, 2) + img(10, 3)
+            + "22/11/2026, 12:11 - Beto: Chau\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"), single(2), single(3), chau]
+        _, counts = check_export.compare(calls, walk, "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["found"], counts["call"]["not_walked"], counts["text"]["not_walked"]), (1, 1, 2))
+
     def test_a_walk_album_ends_with_its_grid_its_sender_or_a_new_photo_1(self):
         # Found testing made-up chats for #62, round two: two albums of 3 in a row, the first missing photo 3, became
         # one album; a tile read before photo 3 ended the album; an album with no tile ran into the next one.

@@ -430,7 +430,8 @@ album of the same size ("Ver foto, 1 de 3"). A call followed by photos sent one 
 same way, and a photo sent on its own right after an album is listed as one more file of it, so an
 album is also tried as a call with photos of their own, and as a smaller album the walk shows with
 photos of their own; the reading that lines up the most lines in order, over the whole chat, is
-kept. In the part not walked, an album is not walked. An album with more files than its grid shows has a
+kept, and between readings that line up as many, the one that leaves the fewest lines missing (a walk
+that stopped short is read where it reached, not in the part it did not walk). In the part not walked, an album is not walked. An album with more files than its grid shows has a
 last tile, "+ 3", over the rest: the walk cannot show those, so as many of the album's files it did
 not find as the tile stands for are "behind the album's last tile", not missing; any more are missing.
 The walk shows an album's photos as "Ver
