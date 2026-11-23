@@ -340,7 +340,9 @@ def line_up_by_direction(a, b, a_dir, b_dir, from_end=False):
         return weighted_line_up(a, b, a_dir, b_dir)
     pairs, (i0, j0) = {}, (-1, -1)
     for i, j in fixed + [(len(a), len(b))]:
-        inner = line_up_by_direction(a[i0 + 1:i], b[j0 + 1:j], a_dir[i0 + 1:i], b_dir[j0 + 1:j])
+        # The stretch before the first fixed line keeps its ties next to that line, not at the far end of the chat
+        # (with both ends unsure, a walk of the middle of a chat was lined up with the copies at its far end: #62).
+        inner = line_up_by_direction(a[i0 + 1:i], b[j0 + 1:j], a_dir[i0 + 1:i], b_dir[j0 + 1:j], from_end=i0 < 0)
         pairs.update({i0 + 1 + x: j0 + 1 + y for x, y in inner.items()})
         if i < len(a):
             pairs[i] = j
@@ -369,13 +371,16 @@ def longest_rising(marks):
 
 
 def weighted_line_up(a, b, a_dir, b_dir):
-    """The weighted line-up of line_up_by_direction, line by line, over the stretch of a around the lines difflib
-    finds in b, with a margin of b's length on each side."""
+    """The weighted line-up of line_up_by_direction, line by line. Over the whole of a, up to some four million steps;
+    past that, over the stretch of a around the lines difflib finds in b, with a margin of b's length on each side
+    (with that margin always, in a run of "ok" the copy whose direction agrees could be left out: #62)."""
     rough = line_up(a, b)
     if not rough or not b:
         return {}
-    lo = max(0, min(rough) - len(b))
-    hi = min(len(a), max(rough) + len(b) + 1)
+    lo, hi = 0, len(a)
+    if len(a) * len(b) > 4_000_000:
+        lo = max(0, min(rough) - len(b))
+        hi = min(len(a), max(rough) + len(b) + 1)
     ids = {}
     A = [ids.setdefault(k, len(ids)) for k in a[lo:hi]]
     B = [ids.setdefault(k, len(ids)) for k in b]

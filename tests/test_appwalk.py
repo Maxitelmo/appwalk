@@ -2806,6 +2806,20 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(three, self.grid(3, "sent")[:2], "Ana", ends=(True, True))
         self.assertTrue(check_export.passed(counts), counts)
 
+    def test_repeated_lines_are_lined_up_with_the_copy_that_fits(self):
+        # Found testing made-up chats for #62, round three: the line-up looked only near difflib's first match, so in
+        # a run of "ok" the owner's line was missed; and the stretch before the first line found once, with both ends
+        # unsure, was lined up with the copies at the far end of the chat.
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        oks = check_export.parse_export(head + "".join(f"22/11/2026, 12:0{k} - Ana: ok\n" for k in range(5)) + "22/11/2026, 12:06 - Yo: ok\n")
+        rows, counts = check_export.compare(oks, [walk_row(1, "message", "ok", "sent")], "Yo")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"]), (1, 1))
+        self.assertEqual([r["result"] for r in rows if r["author"] == "Yo"], [check_export.FOUND])
+        middle = check_export.parse_export(head + "".join(f"22/11/2026, 12:0{k} - Ana: {t}\n" for k, t in enumerate(["ok", "hola", "ok", "b", "c", "ok"])))
+        _, counts = check_export.compare(middle, [walk_row(1, "message", "hola", "sent"), walk_row(2, "message", "ok", "sent")], "Ana", ends=(True, True))
+        self.assertTrue(check_export.passed(counts), counts)
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export
