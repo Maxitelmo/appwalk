@@ -2884,6 +2884,12 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual(counts["text"]["direction_right"], 1)
         _, counts = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")], "Lu  \u200f\U0001F469\U0001F9B0 ")
         self.assertEqual(counts["text"]["direction_right"], 1)
+        # A contact not saved is its number between U+202A and U+202C (found testing made-up chats, last round).
+        number = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas est\u00e1n cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - \u202a+99 9 99 0000-0001\u202c: Hola\n")
+        _, counts = check_export.compare(number, [walk_row(1, "message", "Hola", "sent")], "+99 9 99 0000-0001")
+        self.assertEqual(counts["text"]["direction_right"], 1)
 
     def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
         # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to

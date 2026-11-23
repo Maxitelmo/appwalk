@@ -113,9 +113,11 @@ def sha256_file(path):
 def plain(text):
     """Text as compared: NFC, without the direction marks and joiners WhatsApp puts in, odd spaces made plain
     and runs of space made one. The export starts an attachment line with U+200E; the walk starts the
-    encryption notice with U+200C; a moto g47 in 12 hours writes "a. m." with U+202F."""
+    encryption notice with U+200C; a moto g47 in 12 hours writes "a. m." with U+202F. A contact not saved is
+    its phone number between U+202A and U+202C, so --me with the number never matched it (#62, found by
+    testing)."""
     t = unicodedata.normalize("NFC", text or "")
-    t = re.sub("[\u200b\u200c\u200d\u200e\u200f\u2066-\u2069\ufeff]", "", t)
+    t = re.sub("[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]", "", t)
     t = re.sub(r"[\s\u00a0\u202f\u2007]+", " ", t)
     return t.strip()
 
