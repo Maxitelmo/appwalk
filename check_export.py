@@ -304,15 +304,58 @@ def line_up(a, b, from_end=False):
 
 
 def line_up_by_direction(a, b, a_dir, b_dir, from_end=False):
-    """line_up, with the lines' directions part of what they must share, then without them in each stretch between
-    the lines that matched."""
-    pairs = line_up([k + (d,) for k, d in zip(a, a_dir)], [k + (d,) for k, d in zip(b, b_dir)], from_end)
-    bounds = [(-1, -1)] + sorted(pairs.items()) + [(len(a), len(b))]
-    for (i0, j0), (i1, j1) in zip(bounds, bounds[1:]):
-        ga, gb = list(range(i0 + 1, i1)), list(range(j0 + 1, j1))
-        if ga and gb:
-            more = line_up([a[i] for i in ga], [b[j] for j in gb], from_end)
-            pairs.update({ga[i]: gb[j] for i, j in more.items()})
+    """{index in a: index in b}: the most lines the two lists share in order and, of the ways to line up that many,
+    the one with the most lines whose direction agrees (a direction the walk does not give agrees with none). With
+    from_end, of the ways that tie, the one nearest the lists' ends.
+
+    Lined up blind to direction, an "ok" of the owner's that the walk lacks took the other side's "ok"; lined up by
+    direction first, a line with no direction or the wrong one in the walk left a line the walk has as missing; and
+    difflib, which takes the longest run first, let a sticker among repeated texts strand an "ok" at each end (#62,
+    found by testing made-up chats). This line-up counts the lines first and the directions only to break ties.
+    Only the stretch of the export between the first and last lines difflib finds in the walk, with a margin of the
+    walk's length on each side, is lined up this way, so a long chat with a short walk stays quick."""
+    if from_end:
+        back = line_up_by_direction(a[::-1], b[::-1], a_dir[::-1], b_dir[::-1])
+        return {len(a) - 1 - i: len(b) - 1 - j for i, j in back.items()}
+    rough = line_up(a, b)
+    if not rough or not b:
+        return {}
+    lo = max(0, min(rough) - len(b))
+    hi = min(len(a), max(rough) + len(b) + 1)
+    ids = {}
+    A = [ids.setdefault(k, len(ids)) for k in a[lo:hi]]
+    B = [ids.setdefault(k, len(ids)) for k in b]
+    agree = [[bool(d) and d == e for e in b_dir] for d in a_dir[lo:hi]]
+    n, m = len(A), len(B)
+    big = n + m + 1
+    prev = [0] * (m + 1)
+    trace = []
+    for i in range(1, n + 1):
+        cur = [0] * (m + 1)
+        steps = bytearray(m + 1)
+        ai, agi = A[i - 1], agree[i - 1]
+        for j in range(1, m + 1):
+            best, step = prev[j], 1                       # this export line not lined up
+            if cur[j - 1] > best:
+                best, step = cur[j - 1], 2                # this walk line not lined up
+            if ai == B[j - 1]:
+                take = prev[j - 1] + big + agi[j - 1]
+                if take > best:                           # ties keep the lines earlier, the way difflib did
+                    best, step = take, 3
+            cur[j] = best
+            steps[j] = step
+        trace.append(steps)
+        prev = cur
+    pairs, i, j = {}, n, m
+    while i and j:
+        step = trace[i - 1][j]
+        if step == 3:
+            pairs[lo + i - 1] = j - 1
+            i, j = i - 1, j - 1
+        elif step == 2:
+            j -= 1
+        else:
+            i -= 1
     return pairs
 
 

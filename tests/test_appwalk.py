@@ -2610,6 +2610,27 @@ class ExportCheckTests(unittest.TestCase):
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["picture"]["behind_tile"]), (1, 2, 3))
 
+    def test_the_line_up_counts_lines_first_and_directions_only_to_break_ties(self):
+        # Found testing made-up chats for #62, after lining up by direction first: a line with no direction, or the
+        # wrong one, left a line the walk has as missing; and a sticker among repeated texts stranded an "ok".
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        two = check_export.parse_export(head + "22/11/2026, 12:00 - Ana: hola\n22/11/2026, 12:01 - Ana: hola\n")
+        _, counts = check_export.compare(two, [walk_row(1, "message", "hola", ""), walk_row(2, "message", "hola", "sent")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        okok = check_export.parse_export(head + "22/11/2026, 12:00 - Ana: ok\n22/11/2026, 12:01 - Beto: ok\n")
+        rows, counts = check_export.compare(okok, [walk_row(1, "message", "ok", "received"), walk_row(2, "message", "ok", "received")], "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"], counts["text"]["missing"]), (2, 1, 0))
+        self.assertEqual([r["direction_agrees"] for r in rows if r["kind"] == "text"], ["NO", "yes"])
+        sticker = check_export.parse_export(
+            head + "22/11/2026, 12:00 - Ana: ok\n"
+            "22/11/2026, 12:01 - Ana: \u200eSTK-20261122-WA0000.webp (archivo adjunto)\n"
+            "22/11/2026, 12:02 - Ana: ok\n22/11/2026, 12:03 - Ana: ok\n")
+        walk = [walk_row(1, "message", "ok", "sent"), walk_row(2, "described", "Sticker", "sent", rid="media_container"),
+                walk_row(3, "message", "ok", "sent"), walk_row(4, "message", "ok", "sent")]
+        _, counts = check_export.compare(sticker, walk, "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["missing"], counts["text"]["only_walk"]), (3, 0, 0))
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export
