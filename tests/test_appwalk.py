@@ -2572,7 +2572,7 @@ class ExportCheckTests(unittest.TestCase):
         one = self.album_chat(("Beto", 6, 6))
         rows, counts = check_export.compare(one, self.grid(6, "received") + self.grid(6, "received", 10), "Ana")
         self.assertFalse(check_export.passed(counts))
-        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"], counts["picture"]["only_walk"]), (3, 3, 3))
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"], counts["picture"]["only_walk"]), (3, 3, 4))
         # An album's caption shows under its grid, while the export has it after the first file.
         cap = check_export.parse_export(
             "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
@@ -2604,9 +2604,10 @@ class ExportCheckTests(unittest.TestCase):
         rows, counts = check_export.compare(call_then_album, walk, "Ana")
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["call", "album"])
-        # A walk that stopped half way up an album's grid: the photos above where it stopped are not walked.
+        # A walk that stopped half way up an album's grid read its bottom row, photo 3 and the tile: photos 1 and 2,
+        # above where it stopped, are not walked.
         cut = self.album_chat(("Beto", 5, 6))
-        rows, counts = check_export.compare(cut, self.grid(6, "received", shown=1), "Ana", ends=(True, False))
+        rows, counts = check_export.compare(cut, self.grid(6, "received")[2:], "Ana", ends=(True, False))
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["picture"]["behind_tile"]), (1, 2, 3))
 
@@ -2665,6 +2666,22 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(sixes, self.grid(6, "received")[:3] + self.grid(6, "sent", 10), "Ana")
         self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
                           counts["picture"]["behind_tile"]), (6, 6, 3, 3))
+
+    def test_a_stray_tile_counts_and_an_edge_is_past_the_photos_read(self):
+        # Found testing made-up chats for #62, round two: a tile written twice, or a tile with no album in the export,
+        # passed uncounted; and at an unsure end a photo skipped between photos the walk read was "not walked".
+        import check_export
+        six = self.album_chat(("Beto", 5, 6))
+        g = self.grid(6, "received")
+        _, counts = check_export.compare(six, g + g[3:], "Ana")                     # the tile and "+ 3" twice
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual(counts["picture"]["only_walk"], 1)
+        three = self.album_chat(("Ana", 5, 3), after="22/11/2026, 12:09 - Beto: Hola\n")
+        g = self.grid(3, "sent")
+        _, counts = check_export.compare(three, [g[0], g[2], walk_row(9, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (1, 0))   # photo 2 skipped
+        _, counts = check_export.compare(three, [g[2], walk_row(9, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (0, 2))   # 1 and 2 above
 
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.

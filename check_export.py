@@ -56,6 +56,7 @@ COLUMNS = ["export_line", "kind", "author", "direction_by_export", "text", "resu
 FOUND, MISSING, NOT_WALKED, ONLY_WALK = "found", "missing", "not walked", "only in the walk"
 SYSTEM = "system line (not counted)"
 LINK_CARD = "found as its preview card: WhatsApp showed the card, not the typed link"
+DESCRIBED_ONLY = "only in the walk: a description (a sticker, a GIF) the check does not compare (not counted)"
 CARD_LINE = "only in the walk, where the export has a link sent alone: a line of its preview card (not counted)"
 OTHER_FILE = "attachment of another kind (not compared)"
 ALBUM = "album: the photos and videos after it are its own lines (not counted)"
@@ -554,23 +555,28 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
 
     only = []   # (walk row, kind, direction, result) for lines the export does not have
 
-    def album_found(files, w, at_edge=False):
+    def album_found(files, w, edge=None):
         """An album lined up with the walk's: the files its grid shows are found while the walk has photos for them,
         and missing after; as many as its last tile stands for are behind it; any more are missing. At an end of the
-        list the walk did not confirm reaching, the grid's photos the walk lacks may be past where it stopped, so
-        they are not walked, not missing (a walk that stopped half way up an album's grid: #62, found by testing
-        made-up chats). The walk's photos past those, and any photo written twice, are lines the export does not
-        have."""
+        list the walk did not confirm reaching, the grid's photos the walk lacks past the ones it read (lower numbers
+        at the oldest end, higher at the newest) may be past where it stopped, so they are not walked, not missing
+        (a walk that stopped half way up an album's grid: #62); one it skipped between photos it read is missing
+        (#62, both found by testing made-up chats). The walk's photos past those, and any photo written twice, are
+        lines the export does not have."""
         hidden = w["hidden"] if w["tile"] is not None else 0
         shown = max(0, w["size"] - hidden)
         photos = [w["photos"][k] for k in sorted(w["photos"])]
         n = min(len(photos), shown, len(files))
+        read = [k for k in w["photos"] if k <= shown]
+        unread = [k for k in range(1, shown + 1) if k not in w["photos"]]
+        past = len([k for k in unread if not read or (edge == "oldest" and k < min(read)) or (edge == "newest" and k > max(read))]) if edge else 0
+        lacking = [idx for idx in range(n, min(shown, len(files)))]
         for idx, f in enumerate(files):
             if idx < n:
                 mark(f, FOUND, photos[idx][0], photos[idx][1], ALBUM_NOTE)
             elif idx >= shown and idx < shown + hidden:
                 mark(f, BEHIND_TILE, note=ALBUM_NOTE)
-            elif at_edge:
+            elif idx in lacking[:past]:
                 mark(f, NOT_WALKED, note=NOT_WALKED_NOTE)
             else:
                 mark(f, MISSING, note=ALBUM_NOTE)
@@ -584,7 +590,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         if u["kind"] == "album":
             if i in pairs:
                 results[id(x)] = {"result": ALBUM, "note": ""}
-                album_found(u["files"], W[pairs[i]], at_edge=(i == first and oldest_unsure) or (i == last and newest_unsure))
+                album_found(u["files"], W[pairs[i]], edge="oldest" if i == first and oldest_unsure else "newest" if i == last and newest_unsure else None)
             else:
                 walked = not not_walked(i)
                 results[id(x)] = {"result": ALBUM, "note": "" if walked else NOT_WALKED_NOTE}
@@ -638,9 +644,13 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
             row.update(results.get(id(x), {"result": MISSING}))
         rows.append(row)
     for r, kind, direction, result in only:
-        c = counts.get(kind)
+        # An album's tile the export has no album for, or a tile written twice, stands for photos: it counts as
+        # photos the export lacks (it passed uncounted: #62, found by testing made-up chats).
+        c = counts.get("picture" if kind == "album tile" else kind)
         if c is not None and result == ONLY_WALK:
             c["only_walk"] += 1
+        if kind == "described" and result == ONLY_WALK:
+            result = DESCRIBED_ONLY
         rows.append({"export_line": "", "kind": kind, "author": "", "direction_by_export": "", "text": plain(r.get("text")),
                      "result": result, "walk_line": r.get("line", ""), "walk_direction": direction, "direction_agrees": "",
                      "screenshot": r.get("screenshot", ""), "note": ""})
