@@ -855,9 +855,13 @@ def check(export, me, *, owner_wrote_nothing=False, zip_name=None, chat=None, it
     system = sum(1 for x in lines if x["kind"] == "system")
     other = sum(1 for x in lines if x["kind"] == "attachment")
     links = sum(1 for x in lines if x["kind"] == "link")
-    albums = sum(1 for x in lines if x["kind"] == "album")
-    out.append(f"{len({x['n'] for x in lines if x['kind'] not in ('system', 'album')})} messages in the export, "
+    # An album's first line read as a call is a call, not an album (#62, found by testing made-up chats).
+    albums = sum(1 for r in result if r["export_line"] and r["result"] == ALBUM)
+    calls_read = sum(1 for r in result if r["export_line"] and r["kind"] == "call" and r["direction_by_export"]
+                     and any(x["n"] == r["export_line"] and x["kind"] == "album" for x in lines))
+    out.append(f"{len({x['n'] for x in lines if x['kind'] != 'system'}) - albums} messages in the export, "
                f"{system} system line(s)" + (f", {albums} album(s)" if albums else "")
+               + (f", {calls_read} call(s) written like an album's first line" if calls_read else "")
                + (f", {links} link(s) sent alone" if links else "") + (f", {other} other attachment(s) not compared" if other else ""))
     out += [("ok      " if good else "WARNING ") + t for good, t in count_lines(counts)]
 

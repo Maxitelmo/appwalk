@@ -2318,7 +2318,7 @@ class ExportCheckTests(unittest.TestCase):
             self.assertFalse(check_export.passed(counts), between)
             self.assertEqual([r["result"] for r in rows if r["kind"] == "link"], [check_export.MISSING])
 
-    def export_with_chat(self):
+    def export_with_chat(self, chat=EXPORT_CHAT):
         import zipfile
         out = run(FakePhone(count=12))[0]
         m = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8"))
@@ -2328,7 +2328,7 @@ class ExportCheckTests(unittest.TestCase):
         z = os.path.join(tempfile.mkdtemp(), "Chat de WhatsApp con Grupo.zip")
         self.addCleanup(shutil.rmtree, os.path.dirname(z))
         with zipfile.ZipFile(z, "w") as f:
-            f.writestr("Chat de WhatsApp con Grupo.txt", EXPORT_CHAT.encode("utf-8"))
+            f.writestr("Chat de WhatsApp con Grupo.txt", chat.encode("utf-8"))
             f.writestr("PTT-20261201-WA0000.opus", b"\x00" * 300)
         appwalk.attach_file(out, local_path=z, note="made up")
         return out
@@ -2708,6 +2708,25 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual(bare[1]["kind"], "link")
         _, counts = check_export.compare(bare, card("GitHub", "github.com") + [chau], "Ana")
         self.assertTrue(check_export.passed(counts), counts)
+
+    def test_the_summary_calls_an_album_read_as_a_call_a_call(self):
+        # Found testing made-up chats for #62, round two: an album's first line read as a call was still summed up as
+        # an album.
+        import check_export
+        from unittest import mock
+        out = self.export_with_chat(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                walk_row(3, "described", "Agrandar foto", "sent", rid="image")]
+        with mock.patch.object(transcript, "build", lambda export, folder=None: ([{c: r.get(c, "") for c in transcript.COLUMNS} for r in walk], [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        summary = "\n".join(lines)
+        self.assertIn("3 messages in the export, 1 system line(s), 1 call(s) written like an album's first line", summary)
+        self.assertNotIn("album(s)", summary)
 
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
