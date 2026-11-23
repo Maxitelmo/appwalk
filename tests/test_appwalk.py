@@ -2663,6 +2663,19 @@ class ExportCheckTests(unittest.TestCase):
         self.assertTrue(check_export.passed(counts), counts)
         self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["album", "call"])
 
+    def test_albums_far_apart_are_read_in_the_same_round(self):
+        # Found testing made-up chats for #62, round three: five albums of 3, each an album of 2 and a photo sent on
+        # its own. Read one at a time over the whole chat, the last one gained nothing and came out as a missing call
+        # and two missing photos.
+        import check_export
+        chat = self.album_chat(*[("Ana", minute, 3) for minute in range(5, 10)])
+        walk = []
+        for k in range(5):
+            walk += self.grid(2, "sent", 1 + 3 * k) + [walk_row(3 + 3 * k, "described", "Agrandar foto", "sent", rid="image")]
+        _, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["missing"], counts["call"]["export"]), (15, 0, 0))
+
     def test_a_walk_album_ends_with_its_grid_its_sender_or_a_new_photo_1(self):
         # Found testing made-up chats for #62, round two: two albums of 3 in a row, the first missing photo 3, became
         # one album; a tile read before photo 3 ended the album; an album with no tile ran into the next one.

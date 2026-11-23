@@ -569,20 +569,56 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     def score(eu, got):
         return len(got), sum(1 for i, j in got.items() if W[j]["direction"] and W[j]["direction"] == sent_by(eu[i]["author"]))
 
-    # Each round tries every reading of every album and keeps the one that lines up the most: taking the first
-    # that helped read a real album of 2 as a call, where the call and its photos were the next one (#62).
+    # Each round tries every reading of every album and keeps the ones that line up the most: taking the first that
+    # helped read a real album of 2 as a call, where the call and its photos were the next one (#62). A reading is
+    # scored on the stretch of the chat around its album, twenty units each side, against the walk between the lines
+    # found outside that stretch; the readings that help and do not share a stretch are all kept in one round, and
+    # the whole chat is lined up again after. Scored over the whole chat, one album at a time, 200 calls with photos
+    # took a minute (#62, found by testing made-up chats).
+    reach = 20
+
+    def stretch(i, size):
+        lo, hi = max(0, i - reach), min(len(E), i + size + reach)
+        left = max((p for p in pairs if p < lo), default=None)
+        right = min((p for p in pairs if p >= hi), default=None)
+        return lo, hi, (pairs[left] + 1 if left is not None else 0), (pairs[right] if right is not None else len(W))
+
     best = score(E, pairs)
     while True:
         # Only an album the line-up left out, or one of a size the export has more of than the line-up found, can
         # be read better; trying every album each round took minutes on a chat of 2,000 messages.
         lone = {E[i]["size"] for i, u in enumerate(E) if u["kind"] == "album" and i not in pairs}
-        tried = [(E[:i] + reading + E[i + 1 + len(u["captions"]):]) for i, u in enumerate(E)
-                 if u["kind"] == "album" and (i not in pairs or u["size"] in lone) for reading in readings(u)]
-        tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
-        top = max(tried, key=lambda t: t[0], default=None)
-        if not top or top[0] <= best:
+        gains = []
+        for i, u in enumerate(E):
+            if u["kind"] != "album" or (i in pairs and u["size"] not in lone):
+                continue
+            span = 1 + len(u["captions"])
+            lo, hi, wlo, whi = stretch(i, span)
+            here = score(E[lo:hi], line_up_units(E[lo:hi], W[wlo:whi]))
+            for reading in readings(u):
+                trial = E[lo:i] + reading + E[i + span:hi]
+                got = score(trial, line_up_units(trial, W[wlo:whi]))
+                if got > here:
+                    gains.append((got[0] - here[0], got[1] - here[1], -i, i, span, lo, hi, reading))
+                    here = got
+        if not gains:
             break
-        best, E, pairs = top
+        chosen, taken = [], []
+        for g in sorted(gains, key=lambda g: g[:3], reverse=True):
+            if all(g[6] <= lo or g[5] >= hi for lo, hi in taken):
+                chosen.append(g)
+                taken.append((g[5], g[6]))
+        moved = False
+        for group in (chosen, chosen[:1]):   # all at once, or failing that the best alone
+            trial = list(E)
+            for g in sorted(group, key=lambda g: g[3], reverse=True):
+                trial[g[3]:g[3] + g[4]] = g[7]
+            got = line_up_units(trial, W)
+            if score(trial, got) > best:
+                best, E, pairs, moved = score(trial, got), trial, got, True
+                break
+        if not moved:
+            break
     used = set(pairs.values())
     first = min(pairs) if pairs else None
     last = max(pairs) if pairs else None
