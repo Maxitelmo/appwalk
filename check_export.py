@@ -431,14 +431,16 @@ def walk_units(wk, walk_rows):
         size = int(photo.group(2)) if photo else int(tile.group(1))
         k = int(photo.group(1)) if photo else None
         # An album is done when its grid is: a tile and the three photos beside it, or all of its four or fewer
-        # photos. A tile read before photo 3 did not end it (photo 3 then started an album of its own); an album of
-        # the other sender, or a grid starting again at photo 1, starts another (two albums of 3 in a row, the first
-        # missing a photo, became one; #62, found by testing made-up chats).
+        # photos. A tile read before photo 3 did not end it (photo 3 then started an album of its own). A grid's
+        # numbers rise in the walk's order, so a photo 1 the album has, or a number lower than its highest, starts
+        # another album: two albums of 3 in a row, the first missing a photo, became one, and so did the bottom of
+        # one album and the next at the walk's oldest end. The sender does not split an album: one photo with no
+        # direction, or the wrong one, broke a grid into pieces (#62, found by testing made-up chats).
         done = album is not None and len(album["photos"]) >= (3 if album["size"] > 4 else album["size"]) and (
             album["size"] <= 4 or album["tile"] is not None)
-        other = album is not None and direction and album["dirs"] and direction not in album["dirs"]
-        again = album is not None and k == 1 and 1 in album["photos"]
-        if album is None or album["size"] != size or done or other or again or (tile and album["tile"] is not None):
+        again = album is not None and k is not None and (
+            (k == 1 and 1 in album["photos"]) or (k not in album["photos"] and album["photos"] and k < max(album["photos"])))
+        if album is None or album["size"] != size or done or again or (tile and album["tile"] is not None):
             album = {"kind": "album", "size": size, "photos": {}, "extra": [], "tile": None, "hidden": 0, "dirs": [],
                      "row": r, "text": text}
             units.append(album)
@@ -670,13 +672,18 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         (a walk that stopped half way up an album's grid: #62); one it skipped between photos it read is missing
         (#62, both found by testing made-up chats). The walk's photos past those, and any photo written twice, are
         lines the export does not have."""
-        hidden = w["hidden"] if w["tile"] is not None else 0
+        # An album of more than four shows three photos and a tile, whether or not the walk read the tile: with the
+        # bottom row missed, every file past the photos read was missing, where three are behind the tile (#62).
+        hidden = w["hidden"] if w["tile"] is not None else (w["size"] - 3 if w["size"] > 4 else 0)
         shown = max(0, w["size"] - hidden)
         photos = [w["photos"][k] for k in sorted(w["photos"])]
         n = min(len(photos), shown, len(files))
         read = [k for k in w["photos"] if k <= shown]
+        if w["tile"] is not None and w["size"] > 4:
+            read.append(3)   # the tile sits beside photo 3: a walk that read it had photo 3 on its screen
         unread = [k for k in range(1, shown + 1) if k not in w["photos"]]
-        past = len([k for k in unread if not read or (edge == "oldest" and k < min(read)) or (edge == "newest" and k > max(read))]) if edge else 0
+        past = len([k for k in unread if not read or ("oldest" in edge and k < min(read))
+                    or ("newest" in edge and k > max(read))]) if edge else 0
         lacking = [idx for idx in range(n, min(shown, len(files)))]
         for idx, f in enumerate(files):
             if idx < n:
@@ -697,7 +704,8 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         if u["kind"] == "album":
             if i in pairs:
                 results[id(x)] = {"result": ALBUM, "note": "", "text": f"{len(u['files'])} files"}
-                album_found(u["files"], W[pairs[i]], edge="oldest" if i == first and oldest_unsure else "newest" if i == last and newest_unsure else None)
+                album_found(u["files"], W[pairs[i]],
+                            edge=(("oldest",) if i == first and oldest_unsure else ()) + (("newest",) if i == last and newest_unsure else ()))
             else:
                 walked = not not_walked(i)
                 results[id(x)] = {"result": ALBUM, "note": "" if walked else NOT_WALKED_NOTE}

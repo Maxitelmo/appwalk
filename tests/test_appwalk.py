@@ -2678,7 +2678,7 @@ class ExportCheckTests(unittest.TestCase):
         sixes = self.album_chat(("Beto", 5, 6), ("Ana", 6, 6))
         _, counts = check_export.compare(sixes, self.grid(6, "received")[:3] + self.grid(6, "sent", 10), "Ana")
         self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
-                          counts["picture"]["behind_tile"]), (6, 6, 3, 3))
+                          counts["picture"]["behind_tile"]), (6, 6, 0, 6))   # Beto's tile unread: his 3 are still behind it
 
     def test_a_stray_tile_counts_and_an_edge_is_past_the_photos_read(self):
         # Found testing made-up chats for #62, round two: a tile written twice, or a tile with no album in the export,
@@ -2782,6 +2782,28 @@ class ExportCheckTests(unittest.TestCase):
         walk = self.grid(2, "sent") + [walk_row(3, "message", "Viaje", "sent", rid="caption"),
                                        walk_row(4, "described", "Agrandar foto", "sent", rid="image")]
         _, counts = check_export.compare(smaller, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_a_grid_is_split_by_its_numbers_not_its_directions(self):
+        # Found testing made-up chats for #62, round three: one photo with the wrong direction broke a grid into
+        # pieces; the bottom of one album and the next album of the same sender, at the walk's oldest end, became one;
+        # an album of 6 whose bottom row the walk missed had 4 missing; with both ends unsure, photos past the last
+        # one read were missing.
+        import check_export
+        six = self.album_chat(("Ana", 5, 6))
+        g = self.grid(6, "sent")
+        g[1] = walk_row(2, "described", "Ver foto, 2 de 6", "received", rid="thumb")
+        _, counts = check_export.compare(six, g, "Ana")
+        c = counts["picture"]
+        self.assertEqual((c["found"], c["direction_right"], c["behind_tile"], c["missing"], c["only_walk"]), (3, 2, 3, 0, 0))
+        twice = self.album_chat(("Ana", 5, 6), ("Ana", 6, 6))
+        _, counts = check_export.compare(twice, self.grid(6, "sent")[2:] + self.grid(6, "sent", 10), "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        _, counts = check_export.compare(six, self.grid(6, "sent")[:2], "Ana")
+        c = counts["picture"]
+        self.assertEqual((c["found"], c["missing"], c["behind_tile"]), (2, 1, 3))
+        three = self.album_chat(("Ana", 5, 3))
+        _, counts = check_export.compare(three, self.grid(3, "sent")[:2], "Ana", ends=(True, True))
         self.assertTrue(check_export.passed(counts), counts)
 
     def test_the_owners_name_matches_however_it_is_typed(self):
