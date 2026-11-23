@@ -494,20 +494,16 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     def score(eu, got):
         return len(got), sum(1 for i, j in got.items() if W[j]["direction"] and W[j]["direction"] == sent_by(eu[i]["author"]))
 
+    # Each round tries every reading of every album and keeps the one that lines up the most: taking the first
+    # that helped read a real album of 2 as a call, where the call and its photos were the next one (#62).
     best = score(E, pairs)
-    improved = True
-    while improved:
-        improved = False
-        for i, u in enumerate(E):
-            if u["kind"] != "album":
-                continue
-            tried = [(E[:i] + reading + E[i + 1:]) for reading in readings(u)]
-            tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
-            top = max(tried, key=lambda t: t[0], default=None)
-            if top and top[0] > best:
-                best, E, pairs = top
-                improved = True
-                break
+    while True:
+        tried = [(E[:i] + reading + E[i + 1:]) for i, u in enumerate(E) if u["kind"] == "album" for reading in readings(u)]
+        tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
+        top = max(tried, key=lambda t: t[0], default=None)
+        if not top or top[0] <= best:
+            break
+        best, E, pairs = top
     used = set(pairs.values())
     first = min(pairs) if pairs else None
     last = max(pairs) if pairs else None

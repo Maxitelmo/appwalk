@@ -2651,6 +2651,18 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(call, reversed_walk, "Ana")
         self.assertFalse(check_export.passed(counts))
 
+    def test_the_best_reading_of_all_the_albums_is_kept(self):
+        # Found again after round two: an album of 2, then a call with two photos sent apart. Reading the first album
+        # as the call helped, so it was taken, and the real album and the call came out wrong.
+        import check_export
+        chat = self.album_chat(("Ana", 5, 2), ("Ana", 30, 2))
+        walk = self.grid(2, "sent") + [walk_row(3, "other", "Llamada", rid="call_log_title", side="right"),
+                                       walk_row(4, "described", "Agrandar foto", "sent", rid="image"),
+                                       walk_row(5, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["album", "call"])
+
     def test_a_walk_album_ends_with_its_grid_its_sender_or_a_new_photo_1(self):
         # Found testing made-up chats for #62, round two: two albums of 3 in a row, the first missing photo 3, became
         # one album; a tile read before photo 3 ended the album; an album with no tile ran into the next one.
