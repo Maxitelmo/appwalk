@@ -319,11 +319,58 @@ def line_up_by_direction(a, b, a_dir, b_dir, from_end=False):
     direction first, a line with no direction or the wrong one in the walk left a line the walk has as missing; and
     difflib, which takes the longest run first, let a sticker among repeated texts strand an "ok" at each end (#62,
     found by testing made-up chats). This line-up counts the lines first and the directions only to break ties.
-    Only the stretch of the export between the first and last lines difflib finds in the walk, with a margin of the
-    walk's length on each side, is lined up this way, so a long chat with a short walk stays quick."""
+
+    Lines found once on each side are lined up first, as fixed points (as git's patience diff does), and the
+    weighted line-up runs only in the stretches between them: run over a whole chat of 2,000 messages it took
+    minutes."""
     if from_end:
         back = line_up_by_direction(a[::-1], b[::-1], a_dir[::-1], b_dir[::-1])
         return {len(a) - 1 - i: len(b) - 1 - j for i, j in back.items()}
+    if not a or not b:
+        return {}
+    count_a, count_b = {}, {}
+    for k in a:
+        count_a[k] = count_a.get(k, 0) + 1
+    for k in b:
+        count_b[k] = count_b.get(k, 0) + 1
+    where = {k: i for i, k in enumerate(a) if count_a[k] == 1 and count_b.get(k) == 1}
+    marks = [(where[k], j) for j, k in enumerate(b) if k in where]
+    fixed = longest_rising(marks)
+    if not fixed:
+        return weighted_line_up(a, b, a_dir, b_dir)
+    pairs, (i0, j0) = {}, (-1, -1)
+    for i, j in fixed + [(len(a), len(b))]:
+        inner = line_up_by_direction(a[i0 + 1:i], b[j0 + 1:j], a_dir[i0 + 1:i], b_dir[j0 + 1:j])
+        pairs.update({i0 + 1 + x: j0 + 1 + y for x, y in inner.items()})
+        if i < len(a):
+            pairs[i] = j
+        i0, j0 = i, j
+    return pairs
+
+
+def longest_rising(marks):
+    """The longest run of (i, j) pairs, taken in order of j, whose i also rises."""
+    import bisect
+    tails, prev, at = [], [None] * len(marks), []
+    for n, (i, _) in enumerate(marks):
+        k = bisect.bisect_left(tails, i)
+        if k == len(at):
+            at.append(n)
+            tails.append(i)
+        else:
+            at[k] = n
+            tails[k] = i
+        prev[n] = at[k - 1] if k else None
+    out, n = [], at[-1] if at else None
+    while n is not None:
+        out.append(marks[n])
+        n = prev[n]
+    return out[::-1]
+
+
+def weighted_line_up(a, b, a_dir, b_dir):
+    """The weighted line-up of line_up_by_direction, line by line, over the stretch of a around the lines difflib
+    finds in b, with a margin of b's length on each side."""
     rough = line_up(a, b)
     if not rough or not b:
         return {}
@@ -498,7 +545,11 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # that helped read a real album of 2 as a call, where the call and its photos were the next one (#62).
     best = score(E, pairs)
     while True:
-        tried = [(E[:i] + reading + E[i + 1:]) for i, u in enumerate(E) if u["kind"] == "album" for reading in readings(u)]
+        # Only an album the line-up left out, or one of a size the export has more of than the line-up found, can
+        # be read better; trying every album each round took minutes on a chat of 2,000 messages.
+        lone = {E[i]["size"] for i, u in enumerate(E) if u["kind"] == "album" and i not in pairs}
+        tried = [(E[:i] + reading + E[i + 1:]) for i, u in enumerate(E)
+                 if u["kind"] == "album" and (i not in pairs or u["size"] in lone) for reading in readings(u)]
         tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
         top = max(tried, key=lambda t: t[0], default=None)
         if not top or top[0] <= best:
