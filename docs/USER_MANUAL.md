@@ -428,9 +428,9 @@ an empty message, followed by its photos and videos from the same sender at the 
 line is the album, not a call, and is not counted. An album is lined up as a whole with the walk's
 album of the same size ("Ver foto, 1 de 3"). A call followed by photos sent one by one is written the
 same way, and a photo sent on its own right after an album is listed as one more file of it, so an
-album the walk has no album of that size for is settled where it stands: where the walk shows a call
-and photos of their own, or a smaller album and a photo, it is that; in the part not walked, it is
-not walked. An album with more files than its grid shows has a
+album is also tried as a call with photos of their own, and as a smaller album the walk shows with
+photos of their own; the reading that lines up the most lines in order, over the whole chat, is
+kept. In the part not walked, an album is not walked. An album with more files than its grid shows has a
 last tile, "+ 3", over the rest: the walk cannot show those, so as many of the album's files it did
 not find as the tile stands for are "behind the album's last tile", not missing; any more are missing.
 The walk shows an album's photos as "Ver

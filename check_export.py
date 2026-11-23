@@ -451,50 +451,50 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # A walk that did not reach the oldest end (--stop-at) covers the newest part, so the line-up starts from the
     # newest end: from the oldest, a line said often ("ok") was found in its oldest copies and the newest ones the
     # walk shows came out missing (#62, found by testing made-up chats).
-    # Lined up with each line's direction first, and then without it only in the stretches still unmatched: blind
-    # to direction, an "ok" of the owner's that the walk lacks took the other's "ok", which came out as a wrong
-    # direction plus a missing line of the other's (#62, found by testing made-up chats). A line whose direction is
-    # wrong is still found in the second pass, and still said to be wrong.
-    pairs = line_up_by_direction([unit_key(u) for u in E], [unit_key(u) for u in W],
-                                 [sent_by(u["author"]) for u in E], [u["direction"] for u in W],
-                                 from_end=oldest_unsure and not newest_unsure)
-    used = set(pairs.values())
+    def line_up_units(eu, wu):
+        return line_up_by_direction([unit_key(u) for u in eu], [unit_key(u) for u in wu],
+                                    [sent_by(u["author"]) for u in eu], [u["direction"] for u in wu],
+                                    from_end=oldest_unsure)
+
+    pairs = line_up_units(E, W)
 
     # The export writes an album's first line and a call alike, as an empty message, and lists a photo sent on its
-    # own right after an album, at the same minute, as one more file of it. An album the walk has no album of that
-    # size for is settled where it stands, between the lines found around it: a call there with photos of their own
-    # (a call followed by two photos sent apart read as an album, and both came out as differences: #62), or a
-    # smaller album with the rest as photos of their own.
-    as_call, as_album, file_pairs = {}, {}, {}
-    bounds = [(-1, -1)] + sorted(pairs.items()) + [(len(E), len(W))]
-    for (i0, j0), (i1, j1) in zip(bounds, bounds[1:]):
-        for i in range(i0 + 1, i1):
-            u = E[i]
+    # own right after an album, at the same minute, as one more file of it. So an album can also be read as a call
+    # with photos of their own, or as a smaller album the walk shows with the rest as photos of their own. Each album
+    # is tried each other way over the whole chat, and a reading is kept when it lines up more lines in order (or as
+    # many, with more directions that agree); this is done again until no reading lines up more. (A call followed by
+    # two photos sent apart read as an album, and both came out as differences: #62. Settled by whatever call or
+    # photo was free near it, or by the stretch a first line-up left it, a photo sent later took the place of one of
+    # the album's, a call or photos out of order still passed, and an album of 5 and a photo before an album of 6
+    # took the wrong album: #62, found by testing made-up chats.)
+    def readings(u):
+        files = [{"kind": f["kind"], "line": f, "author": f["author"], "text": f["text"]} for f in u["files"]]
+        call = {"kind": "call", "line": u["line"], "author": u["author"], "text": "", "from_album": True}
+        out = [[call] + files]
+        for size in sorted({w["size"] for w in W if w["kind"] == "album" and 2 <= w["size"] < len(u["files"])}):
+            out.append([{**u, "files": u["files"][:size], "size": size}] + files[size:])
+        return out
+
+    def score(eu, got):
+        return len(got), sum(1 for i, j in got.items() if W[j]["direction"] and W[j]["direction"] == sent_by(eu[i]["author"]))
+
+    best = score(E, pairs)
+    improved = True
+    while improved:
+        improved = False
+        for i, u in enumerate(E):
             if u["kind"] != "album":
                 continue
-            free = [j for j in range(j0 + 1, j1) if j not in used]
-            smaller = next((j for j in free if W[j]["kind"] == "album" and W[j]["size"] < u["size"]), None)
-            calls = [j for j in free if W[j]["kind"] == "call"]
-            call = next((j for j in calls if W[j]["direction"] == sent_by(u["author"])), calls[0] if calls else None)
-            if smaller is not None:
-                as_album[i] = smaller
-                used.add(smaller)
-                rest = u["files"][W[smaller]["size"]:]
-            elif call is not None:
-                as_call[i] = call
-                used.add(call)
-                rest = u["files"]
-            else:
-                continue
-            singles = [j for j in free if j not in used and W[j]["kind"] in ("picture", "video")]
-            more = line_up([(f["kind"],) for f in rest], [(W[j]["kind"],) for j in singles])
-            for a, b in more.items():
-                file_pairs[id(rest[a])] = singles[b]
-                used.add(singles[b])
-
-    settled = set(pairs) | set(as_call) | set(as_album)
-    first = min(settled) if settled else None
-    last = max(settled) if settled else None
+            tried = [(E[:i] + reading + E[i + 1:]) for reading in readings(u)]
+            tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
+            top = max(tried, key=lambda t: t[0], default=None)
+            if top and top[0] > best:
+                best, E, pairs = top
+                improved = True
+                break
+    used = set(pairs.values())
+    first = min(pairs) if pairs else None
+    last = max(pairs) if pairs else None
 
     def not_walked(i):
         """Past the first or last line found, at an end of the list the walk did not confirm reaching. With no line
@@ -572,31 +572,12 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         if w["tile"] is not None:
             only.append((w["tile"], "album tile", w["direction"], TILE))
 
-    def single(f):
-        """A file of an album settled as a photo or video of its own."""
-        j = file_pairs.get(id(f))
-        if j is None:
-            mark(f, MISSING)
-        else:
-            mark(f, FOUND, W[j]["row"], W[j]["direction"])
-
     for i, u in enumerate(E):
         x = u["line"]
         if u["kind"] == "album":
-            if i in pairs or i in as_album:
-                j = pairs.get(i, as_album.get(i))
+            if i in pairs:
                 results[id(x)] = {"result": ALBUM, "note": ""}
-                size = W[j]["size"]
-                album_found(u["files"][:size], W[j], at_edge=(i == first and oldest_unsure) or (i == last and newest_unsure))
-                for f in u["files"][size:]:
-                    single(f)
-            elif i in as_call:
-                j = as_call[i]
-                mark(x, FOUND, W[j]["row"], W[j]["direction"],
-                     "the export writes a call and an album's first line alike; the walk shows a call here", kind="call")
-                results[id(x)]["kind"] = "call"
-                for f in u["files"]:
-                    single(f)
+                album_found(u["files"], W[pairs[i]], at_edge=(i == first and oldest_unsure) or (i == last and newest_unsure))
             else:
                 walked = not not_walked(i)
                 results[id(x)] = {"result": ALBUM, "note": "" if walked else NOT_WALKED_NOTE}
@@ -605,6 +586,16 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                         mark(f, MISSING, note=ALBUM_NOTE)
                     else:
                         mark(f, NOT_WALKED, note=NOT_WALKED_NOTE)
+        elif u.get("from_album"):
+            # An album's first line read as a call.
+            note = "the export writes a call and an album's first line alike; read here as a call"
+            if i in pairs:
+                mark(x, FOUND, W[pairs[i]]["row"], W[pairs[i]]["direction"], note, kind="call")
+            elif not_walked(i):
+                mark(x, NOT_WALKED, note=NOT_WALKED_NOTE, kind="call")
+            else:
+                mark(x, MISSING, note=note, kind="call")
+            results[id(x)]["kind"] = "call"
         elif i in pairs:
             mark(x, FOUND, W[pairs[i]]["row"], W[pairs[i]]["direction"])
         elif not_walked(i):

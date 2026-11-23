@@ -2631,6 +2631,24 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(sticker, walk, "Ana")
         self.assertEqual((counts["text"]["found"], counts["text"]["missing"], counts["text"]["only_walk"]), (3, 0, 0))
 
+    def test_an_album_is_read_the_way_that_lines_up_the_most(self):
+        # Found testing made-up chats for #62, round two: an album settled by what was free near it lost its photo to
+        # a later photo of the same sender, an album of 5 and a photo before an album of 6 took the wrong album, and
+        # a call and photos out of order still passed.
+        import check_export
+        later = self.album_chat(("Ana", 5, 4), after="22/11/2026, 12:07 - Ana: \u200eIMG-20261122-WA0099.jpg (archivo adjunto)\n")
+        single = lambda n: walk_row(n, "described", "Agrandar foto", "sent", rid="image")
+        _, counts = check_export.compare(later, self.grid(3, "sent") + [single(4), single(5)], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        sixes = self.album_chat(("Ana", 0, 6), ("Ana", 1, 6))       # an album of 5 and a photo, then an album of 6
+        _, counts = check_export.compare(sixes, self.grid(5, "sent") + [single(5)] + self.grid(6, "sent", 7), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"]), (7, 5))
+        call = self.album_chat(("Ana", 5, 2))
+        reversed_walk = [single(1), single(2), walk_row(3, "other", "Llamada", rid="call_log_title", side="right")]
+        _, counts = check_export.compare(call, reversed_walk, "Ana")
+        self.assertFalse(check_export.passed(counts))
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export
