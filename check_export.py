@@ -573,27 +573,49 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # Without that address any line there was taken as the card: a voice note written twice, a photo, another link
     # (#62, found by testing made-up chats). A link in the part that was not walked has no card in the walk either
     # (a walk with --stop-at on a Samsung SM-G990E, 21 November 2026, called such a link's result a preview card).
-    # Links that share a stretch take their cards in order, each up to the line that holds its own address, which
-    # must stand as a whole name ("x.com" is not in "netflix.com"); two links in a row took one card, or none (#62,
-    # found by testing made-up chats). A card the walk shows at an end it did not confirm reaching was walked, so it
-    # is looked for there too (a link whose card was the walk's last line was called not walked: #62).
-    card, by_card, start = set(), {}, {}
+    # A card is a run of the walk's card lines (title, snippet, address) ending in the line that holds the link's own
+    # address, as a whole name ("x.com" is not in "netflix.com", "github.com" not in "github.com.evil.org"). Only
+    # card lines make a card: messages the walk wrote around a link were taken as its card and passed (#62). A card
+    # right above a link the walk found by its text is that link's, and no other link takes it. Links that share a
+    # stretch take their cards in order; a card the walk shows at an end it did not confirm reaching was walked, so it
+    # is looked for there too. A card no link takes is a link the export does not have (a card written twice passed).
+    runs, j = [], 0
+    while j < len(W):
+        if W[j]["kind"] == "card":
+            k = j
+            # A card ends at its address line, so two cards in a row are two runs.
+            while k + 1 < len(W) and W[k + 1]["kind"] == "card" and not (W[k]["row"].get("resource_id") or "").endswith(":id/url"):
+                k += 1
+            after = W[k + 1] if k + 1 < len(W) else None
+            owned = after is not None and (k + 1) in used and LINK_ALONE.match(after.get("text") or "")
+            if not owned:
+                runs.append(list(range(j, k + 1)))
+            j = k + 1
+        else:
+            j += 1
+
+    def host_of(link):
+        try:
+            text = link if "://" in link else "http://" + link
+            return (urllib.parse.urlsplit(text).hostname or "").removeprefix("www.")
+        except ValueError:   # an address urlsplit cannot read ("http://[x"): no card can be told to be its
+            return ""
+
+    card, by_card = set(), {}
     for i, u in enumerate(E):
         if u["kind"] != "link" or i in pairs:
             continue
         before = max((pairs[p] for p in pairs if p < i), default=-1)
         after = min((pairs[q] for q in pairs if q > i), default=len(W))
-        text = u["text"] if "://" in u["text"] else "http://" + u["text"]
-        host = (urllib.parse.urlsplit(text).hostname or "").removeprefix("www.")
-        at = re.compile(r"(?<![\w.-])(?:[\w-]+\.)*" + re.escape(host) + r"(?![\w-])") if host else None
-        lines = [j for j in range(max(before + 1, start.get(before, 0)), after)
-                 if j not in used and j not in card and W[j]["kind"] in ("text", "card")]
-        holds = next((n for n, j in enumerate(lines) if at and at.search(W[j]["text"].lower())), None)
-        if holds is not None:
-            taken = lines[max(0, holds - 2):holds + 1]
-            card |= set(taken)
-            by_card[i] = lines[holds]
-            start[before] = lines[holds] + 1
+        host = host_of(u["text"])
+        at = re.compile(r"(?<![\w.-])(?:[\w-]+\.)*" + re.escape(host) + r"(?![\w.-])") if host else None
+        for run in runs:
+            if at and run[0] > before and run[-1] < after and not card & set(run) \
+                    and at.search(W[run[-1]]["text"].lower()):
+                card |= set(run)
+                by_card[i] = run[-1]
+                break
+    stray = [j for run in runs if not card & set(run) for j in run[-1:]]
 
     counts = {k: {"export": 0, "found": 0, "direction_right": 0, "no_direction": 0, "not_walked": 0, "missing": 0,
                   "behind_tile": 0, "walk": 0, "only_walk": 0} for k in KINDS}
@@ -694,6 +716,8 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                 only.append((w["tile"], "album tile", w["direction"], ONLY_WALK))
         elif j in card:
             only.append((w["row"], w["kind"], w["direction"], CARD_LINE))
+        elif j in stray:
+            only.append((w["row"], "link", w["direction"], ONLY_WALK))
         elif j not in used and w["kind"] != "card":
             only.append((w["row"], w["kind"], w["direction"], ONLY_WALK))
 

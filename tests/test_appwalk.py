@@ -2199,8 +2199,8 @@ def walk_of_the_chat(extra=()):
             walk_row(7, "described", "Agrandar foto", "received", rid="image"),
             walk_row(8, "message", "Una foto", "received", rid="caption"),
             walk_row(9, "message", "Eliminaste este mensaje.", "sent"),
-            walk_row(10, "message", "Example Domain", "received"),     # the link's preview card: its title...
-            walk_row(10, "message", "example.com", "received"),        # ...and its address
+            walk_row(10, "other", "Example Domain", rid="title", side="left"),   # the link's preview card: its title...
+            walk_row(10, "other", "example.com", rid="url", side="left"),        # ...and its address
             walk_row(11, "message", "Chau", "received")]
     return rows + list(extra)
 
@@ -2294,11 +2294,11 @@ class ExportCheckTests(unittest.TestCase):
         self.assertEqual(by_text["https://example.com/x"], check_export.NOT_WALKED)
         self.assertEqual(by_text["a line the export does not have"], check_export.ONLY_WALK)   # not taken as a card
         # Inside the part walked, the link keeps its own result and the lines around it are its card.
-        walk.insert(1, walk_row(1, "message", "example.com", "received"))
-        rows, _ = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")] + walk, "Ana")
+        card = [walk_row(1, "other", "Example Domain", rid="title", side="left"), walk_row(1, "other", "example.com", rid="url", side="left")]
+        rows, _ = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")] + card + walk[1:], "Ana")
         by_text = {r["text"]: r["result"] for r in rows}
         self.assertEqual(by_text["https://example.com/x"], check_export.LINK_CARD)
-        self.assertEqual(by_text["a line the export does not have"], check_export.CARD_LINE)
+        self.assertEqual(by_text["Example Domain"], check_export.CARD_LINE)
 
     def test_a_link_card_takes_only_text_lines_that_show_its_address(self):
         # Found testing made-up chats for #62: any walk line where the export has a link was taken as its card, so a
@@ -2739,6 +2739,30 @@ class ExportCheckTests(unittest.TestCase):
         summary = "\n".join(lines)
         self.assertIn("3 messages in the export, 1 system line(s), 1 call(s) written like an album's first line", summary)
         self.assertNotIn("album(s)", summary)
+
+    def test_a_link_card_is_made_of_card_lines_only(self):
+        # Found testing made-up chats for #62, round three: a text the walk wrote twice beside a card was taken into
+        # it; "github.com.evil.org" passed for github.com; an address urlsplit cannot read crashed; a card written
+        # twice passed; a link the walk lacks took the card of another link it found by its text.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        card = lambda host: [walk_row(2, "other", "Title", rid="title", side="left"), walk_row(2, "other", host, rid="url", side="left")]
+        chau = walk_row(3, "message", "Chau", "received")
+        one = check_export.parse_export(head + "1/12/26, 9:01 - Beto: Chau\n1/12/26, 9:02 - Beto: https://github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(one, [chau, chau] + card("github.com") + [chau], "Ana")      # Chau written twice
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual(counts["text"]["only_walk"], 1)
+        _, counts = check_export.compare(one, [chau] + card("github.com.evil.org") + [chau], "Ana")
+        self.assertEqual(counts["link"]["missing"], 1)
+        _, counts = check_export.compare(one, [chau] + card("github.com") + card("github.com") + [chau], "Ana")
+        self.assertFalse(check_export.passed(counts))                                                   # a card twice
+        odd = check_export.parse_export(head + "1/12/26, 9:02 - Beto: http://[x/abc\n")
+        rows, counts = check_export.compare(odd, card("x"), "Ana")                                      # no crash
+        self.assertEqual(counts["link"]["missing"], 1)
+        two = check_export.parse_export(head + "1/12/26, 9:01 - Beto: https://github.com/a\n1/12/26, 9:02 - Beto: https://github.com/b\n")
+        found = walk_row(4, "message", "https://github.com/b", "received")
+        _, counts = check_export.compare(two, card("github.com") + [found], "Ana")
+        self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (1, 1))                  # b's card is b's
 
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
