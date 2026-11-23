@@ -474,12 +474,18 @@ def export_units(export_lines):
         if x["kind"] in ("system", "attachment"):
             continue
         if x["kind"] == "album":
-            albums[x["n"]] = {"kind": "album", "line": x, "files": [], "size": x.get("album_size"), "author": x["author"]}
+            albums[x["n"]] = {"kind": "album", "line": x, "files": [], "size": x.get("album_size"), "author": x["author"],
+                              "captions": []}
             units.append(albums[x["n"]])
         elif x.get("album") in albums:
             albums[x["album"]]["files"].append(x)
         else:
-            units.append({"kind": x["kind"], "line": x, "author": x["author"], "text": x["text"]})
+            unit = {"kind": x["kind"], "line": x, "author": x["author"], "text": x["text"]}
+            owner = next((a for a in albums.values() if any(f["n"] == x["n"] for f in a["files"])), None)
+            if x["kind"] == "caption" and owner is not None:
+                unit["of_file"] = x["n"]          # the caption of an album's file, by the file's line
+                owner["captions"].append(unit)
+            units.append(unit)
     return units
 
 
@@ -531,11 +537,26 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
     # the album's, a call or photos out of order still passed, and an album of 5 and a photo before an album of 6
     # took the wrong album: #62, found by testing made-up chats.)
     def readings(u):
-        files = [{"kind": f["kind"], "line": f, "author": f["author"], "text": f["text"]} for f in u["files"]]
+        """The other ways to read an album unit, each with the units that replace it and its captions. A file read as
+        a photo of its own keeps its caption right after it, as the walk shows it (the captions stayed after all
+        the files, so a call with a captioned photo failed: #62). Smaller albums come first and a call last, so a
+        tie keeps an album (a tie read as a call invented a missing call: #62)."""
+        caps = {c["of_file"]: c for c in u["captions"]}
+
+        def alone(files):
+            out = []
+            for f in files:
+                out.append({"kind": f["kind"], "line": f, "author": f["author"], "text": f["text"]})
+                if f["n"] in caps:
+                    out.append(caps[f["n"]])
+            return out
+        out = []
+        for size in sorted({w["size"] for w in W if w["kind"] == "album" and 2 <= w["size"] < len(u["files"])}, reverse=True):
+            kept = u["files"][:size]
+            out.append([{**u, "files": kept, "size": size, "captions": [caps[f["n"]] for f in kept if f["n"] in caps],
+                         "read_size": size}] + [caps[f["n"]] for f in kept if f["n"] in caps] + alone(u["files"][size:]))
         call = {"kind": "call", "line": u["line"], "author": u["author"], "text": "", "from_album": True}
-        out = [[call] + files]
-        for size in sorted({w["size"] for w in W if w["kind"] == "album" and 2 <= w["size"] < len(u["files"])}):
-            out.append([{**u, "files": u["files"][:size], "size": size}] + files[size:])
+        out.append([call] + alone(u["files"]))
         return out
 
     def score(eu, got):
@@ -548,7 +569,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         # Only an album the line-up left out, or one of a size the export has more of than the line-up found, can
         # be read better; trying every album each round took minutes on a chat of 2,000 messages.
         lone = {E[i]["size"] for i, u in enumerate(E) if u["kind"] == "album" and i not in pairs}
-        tried = [(E[:i] + reading + E[i + 1:]) for i, u in enumerate(E)
+        tried = [(E[:i] + reading + E[i + 1 + len(u["captions"]):]) for i, u in enumerate(E)
                  if u["kind"] == "album" and (i not in pairs or u["size"] in lone) for reading in readings(u)]
         tried = [(score(trial, got), trial, got) for trial in tried for got in [line_up_units(trial, W)]]
         top = max(tried, key=lambda t: t[0], default=None)
@@ -675,7 +696,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
         x = u["line"]
         if u["kind"] == "album":
             if i in pairs:
-                results[id(x)] = {"result": ALBUM, "note": ""}
+                results[id(x)] = {"result": ALBUM, "note": "", "text": f"{len(u['files'])} files"}
                 album_found(u["files"], W[pairs[i]], edge="oldest" if i == first and oldest_unsure else "newest" if i == last and newest_unsure else None)
             else:
                 walked = not not_walked(i)
@@ -694,7 +715,7 @@ def compare(export_lines, walk_rows, me, ends=(False, False)):
                 mark(x, NOT_WALKED, note=NOT_WALKED_NOTE, kind="call")
             else:
                 mark(x, MISSING, note=note, kind="call")
-            results[id(x)]["kind"] = "call"
+            results[id(x)].update(kind="call", text="")
         elif i in pairs:
             mark(x, FOUND, W[pairs[i]]["row"], W[pairs[i]]["direction"])
         elif i in by_card:

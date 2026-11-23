@@ -2764,6 +2764,26 @@ class ExportCheckTests(unittest.TestCase):
         _, counts = check_export.compare(two, card("github.com") + [found], "Ana")
         self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (1, 1))                  # b's card is b's
 
+    def test_a_caption_follows_its_own_file_in_every_reading(self):
+        # Found testing made-up chats for #62, round three: read as a call with photos, or as a smaller album and a
+        # photo, an album's captions stayed after all its files, while the walk shows each under its own photo; and
+        # the call's row kept the album's "2 files".
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        img = lambda k: f"22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n"
+        call = check_export.parse_export(head + "22/11/2026, 12:05 - Ana: \n" + img(1) + "Mira\n" + img(2))
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"), walk_row(3, "message", "Mira", "sent", rid="caption"),
+                walk_row(4, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(call, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["text"] for r in rows if r["kind"] == "call"], [""])
+        smaller = check_export.parse_export(head + "22/11/2026, 12:05 - Ana: \n" + img(1) + "Viaje\n" + img(2) + img(3))
+        walk = self.grid(2, "sent") + [walk_row(3, "message", "Viaje", "sent", rid="caption"),
+                                       walk_row(4, "described", "Agrandar foto", "sent", rid="image")]
+        _, counts = check_export.compare(smaller, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
     def test_the_owners_name_matches_however_it_is_typed(self):
         # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
         import check_export
