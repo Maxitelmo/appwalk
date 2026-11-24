@@ -2212,7 +2212,27 @@ def main(argv=None):
     at.add_argument("--note", help="what the file is and how it was made, in words, kept in its row")
     tp = sub.add_parser("teach", help="open the Teach window on an export: a profile for its app from a few clicks")
     tp.add_argument("export")
+    ce = sub.add_parser("check-export", help="compare a WhatsApp walk with the chat's own Export chat, added with attach; "
+                        "writes export_check.csv and export_check.txt in the export (Spanish Android exports only)")
+    ce.add_argument("export")
+    ce.add_argument("--me", required=True, metavar="NAME", help="the walked phone's owner, as the export spells the name")
+    ce.add_argument("--owner-wrote-nothing", action="store_true", help="go on when no sender in the export is NAME: the "
+                    "owner wrote nothing in this chat")
+    ce.add_argument("--zip", metavar="FILE", help="the attached zip to read, when more than one is attached")
+    ce.add_argument("--chat", metavar="TXT", help="the chat text inside the zip, when it holds more than one")
+    ce.add_argument("--item", metavar="TITLE", help="the walked item (row of a list walk) to compare, when there is more than one")
     a = ap.parse_args(argv)
+
+    if a.cmd == "check-export":
+        import check_export
+        try:
+            ok, lines = check_export.check(a.export, a.me, owner_wrote_nothing=a.owner_wrote_nothing, zip_name=a.zip,
+                                           chat=a.chat, item=a.item)
+        except check_export.CheckStopped as e:
+            print(f"export check not made: {e}")
+            return 2
+        print("\n".join(lines))
+        return 0 if ok else 1
 
     if a.cmd == "verify":
         res = verify_export(a.export)

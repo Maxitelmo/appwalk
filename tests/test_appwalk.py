@@ -2165,5 +2165,779 @@ class WhatsAppThumbTests(unittest.TestCase):
         self.assertEqual(sum(1 for _, (role, _) in self.lines() if role == "described"), 5)
 
 
+# A made-up group chat in the shape of an Android Export chat in Spanish (es-US): a 12-hour time with U+202F
+# inside "a. m.", the U+200E WhatsApp puts before an attachment, a caption on the line after a picture, a
+# message of two lines, a deleted message and a link sent on its own. Names and texts are fictional.
+EXPORT_CHAT = (
+    "\ufeff1/12/26, 9:00\u202fa.\u202fm. - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+    "1/12/26, 9:00\u202fa.\u202fm. - Creaste este grupo\n"
+    "1/12/26, 9:01\u202fa.\u202fm. - Ana: Hola\n"
+    "1/12/26, 9:02\u202fa.\u202fm. - Beto: Primera línea\n"
+    "segunda línea\n"
+    "1/12/26, 9:03\u202fa.\u202fm. - Ana: \u200ePTT-20261201-WA0000.opus (archivo adjunto)\n"
+    "1/12/26, 9:04\u202fa.\u202fm. - Beto: \u200eIMG-20261201-WA0001.jpg (archivo adjunto)\n"
+    "Una foto\n"
+    "1/12/26, 9:05\u202fa.\u202fm. - Ana: Eliminaste este mensaje.\n"
+    "1/12/26, 9:06\u202fa.\u202fm. - Beto: https://example.com/x\n"
+    "1/12/26, 9:07\u202fa.\u202fm. - Beto: Chau\n")
+
+
+def walk_row(line, role, text, direction="", rid="message_text", desc="", side=""):
+    """A transcript line as transcript.build gives it, the fields check-export reads."""
+    return {"item": "", "line": str(line), "role": role, "direction": direction, "text": text, "app_description": desc,
+            "resource_id": "com.whatsapp:id/" + rid, "screenshot": f"{line:04d}.png", "side": side}
+
+
+def walk_of_the_chat(extra=()):
+    """The transcript of a walk of EXPORT_CHAT on Ana's phone, every message found, plus `extra` at the end."""
+    rows = [walk_row(1, "other", "Creaste este grupo", rid="info"),
+            walk_row(2, "message", "Hola", "sent"),
+            walk_row(3, "other", "Beto", rid="name_in_group_tv"),
+            walk_row(4, "message", "Primera línea\nsegunda línea", "received"),
+            walk_row(5, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar"),
+            walk_row(6, "other", "0:07", rid="description"),
+            walk_row(7, "described", "Agrandar foto", "received", rid="image"),
+            walk_row(8, "message", "Una foto", "received", rid="caption"),
+            walk_row(9, "message", "Eliminaste este mensaje.", "sent"),
+            walk_row(10, "other", "Example Domain", rid="title", side="left"),   # the link's preview card: its title...
+            walk_row(10, "other", "example.com", rid="url", side="left"),        # ...and its address
+            walk_row(11, "message", "Chau", "received")]
+    return rows + list(extra)
+
+
+class ExportCheckTests(unittest.TestCase):
+    """check-export: a WhatsApp walk against the chat's own Export chat (abrignoni/appwalk#57)."""
+
+    def test_the_export_is_read_line_by_line(self):
+        import check_export
+        lines = check_export.parse_export(EXPORT_CHAT)
+        self.assertEqual([(x["n"], x["kind"], x["author"]) for x in lines], [
+            (1, "system", ""), (2, "system", ""), (3, "text", "Ana"), (4, "text", "Beto"), (6, "voice note", "Ana"),
+            (7, "picture", "Beto"), (7, "caption", "Beto"), (9, "deleted", "Ana"), (10, "link", "Beto"), (11, "text", "Beto")])
+        self.assertEqual(lines[3]["text"], "Primera línea segunda línea")
+        self.assertEqual(lines[4]["file"], "PTT-20261201-WA0000.opus")
+        self.assertEqual(lines[6]["text"], "Una foto")
+
+    def test_a_format_or_language_not_tried_stops_the_check(self):
+        import check_export
+        for text, said in (("[1/12/26, 9:01:05\u202fa.\u202fm.] Ana: Hola\n", "iPhone"),
+                           ("12/1/26, 9:01 AM - Ana: Hi\n12/1/26, 9:02 AM - Ana: \u200ePTT-1.opus (file attached)\n", "English"),
+                           ("1/12/26, 9:01 - Ana: Hola\n", "language"),
+                           ("1/12/26, 9:01 - Ana: <Multimedia omitido>\n1/12/26, 9:02 - Ana: Eliminaste este mensaje.\n", "without media"),
+                           ("Ana: Hola\n", "format")):
+            with self.assertRaises(check_export.CheckStopped) as e:
+                check_export.parse_export(text)
+            self.assertIn(said, str(e.exception))
+
+    def test_every_message_found_with_its_direction_passes(self):
+        import check_export
+        rows, counts = check_export.compare(check_export.parse_export(EXPORT_CHAT), walk_of_the_chat(), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual({k: (c["export"], c["found"], c["direction_right"]) for k, c in counts.items() if c["export"]},
+                         {"text": (3, 3, 3), "voice note": (1, 1, 1), "picture": (1, 1, 1), "caption": (1, 1, 1), "deleted": (1, 1, 1),
+                          "link": (1, 1, 1)})   # the link, found as its preview card
+        by_line = {(r["export_line"], r["kind"]): r["result"] for r in rows}
+        self.assertEqual(by_line[(10, "link")], check_export.LINK_CARD)        # its own result, not "missing"
+        self.assertEqual(by_line[(1, "system")], check_export.SYSTEM)
+        # The preview card's line, where the export has the link, is listed as the card and not counted.
+        self.assertIn(("Example Domain", check_export.CARD_LINE), [(r["text"], r["result"]) for r in rows])
+
+    def test_a_voice_note_written_twice_is_caught(self):
+        # #39: the walk wrote one voice note twice; asking only whether each is there would pass it.
+        import check_export
+        twice = walk_of_the_chat()
+        twice.insert(5, walk_row(5, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar"))
+        rows, counts = check_export.compare(check_export.parse_export(EXPORT_CHAT), twice, "Ana")
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual((counts["voice note"]["found"], counts["voice note"]["walk"], counts["voice note"]["only_walk"]), (1, 2, 1))
+        self.assertIn(check_export.ONLY_WALK, [r["result"] for r in rows if r["kind"] == "voice note"])
+
+    def test_a_text_written_twice_and_a_wrong_direction_are_caught(self):
+        import check_export
+        export = check_export.parse_export(EXPORT_CHAT)
+        _, counts = check_export.compare(export, walk_of_the_chat([walk_row(12, "message", "Chau", "received")]), "Ana")
+        self.assertEqual(counts["text"]["only_walk"], 1)
+        self.assertFalse(check_export.passed(counts))
+        wrong = walk_of_the_chat()
+        wrong[1] = walk_row(2, "message", "Hola", "received")
+        rows, counts = check_export.compare(export, wrong, "Ana")
+        self.assertEqual(counts["text"]["direction_right"], 2)
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual([r["direction_agrees"] for r in rows if r["text"] == "Hola"], ["NO"])
+
+    def test_the_part_a_walk_did_not_reach_is_not_walked_not_missing(self):
+        import check_export
+        export = check_export.parse_export(EXPORT_CHAT)
+        newest = walk_of_the_chat()[6:]           # from the picture on: the walk stopped before the oldest messages
+        rows, counts = check_export.compare(export, newest, "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual(counts["text"]["not_walked"], 2)
+        self.assertEqual({r["result"] for r in rows if r["export_line"] in (3, 4, 6)}, {check_export.NOT_WALKED})
+        # With that end confirmed, the same lines are missing.
+        _, counts = check_export.compare(export, newest, "Ana", ends=(False, False))
+        self.assertEqual((counts["text"]["missing"], counts["voice note"]["missing"]), (2, 1))
+
+    def test_a_link_the_walk_did_not_reach_is_not_walked_and_has_no_card(self):
+        # As a walk with --stop-at on the Samsung SM-G990E (21 November 2026): the link was in the part not walked,
+        # and its result said it was shown as a preview card.
+        import check_export
+        export = check_export.parse_export(
+            "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "1/12/26, 9:01 - Ana: Hola\n"
+            "1/12/26, 9:02 - Beto: https://example.com/x\n"
+            "1/12/26, 9:03 - Beto: Chau\n")
+        # As on the Samsung: the walk stopped below the link and shows nothing of it.
+        walk = [walk_row(1, "message", "a line the export does not have", "received"),
+                walk_row(2, "message", "Chau", "received")]
+        rows, _ = check_export.compare(export, walk, "Ana", ends=(True, False))
+        by_text = {r["text"]: r["result"] for r in rows}
+        self.assertEqual(by_text["https://example.com/x"], check_export.NOT_WALKED)
+        self.assertEqual(by_text["a line the export does not have"], check_export.ONLY_WALK)   # not taken as a card
+        # Inside the part walked, the link keeps its own result and the lines around it are its card.
+        card = [walk_row(1, "other", "Example Domain", rid="title", side="left"), walk_row(1, "other", "example.com", rid="url", side="left")]
+        rows, _ = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")] + card + walk[1:], "Ana")
+        by_text = {r["text"]: r["result"] for r in rows}
+        self.assertEqual(by_text["https://example.com/x"], check_export.LINK_CARD)
+        self.assertEqual(by_text["Example Domain"], check_export.CARD_LINE)
+
+    def test_a_link_card_takes_only_text_lines_that_show_its_address(self):
+        # Found testing made-up chats for #62: any walk line where the export has a link was taken as its card, so a
+        # voice note written twice there, or a different link and a typed message, passed.
+        import check_export
+        export = check_export.parse_export(
+            "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "1/12/26, 9:01 - Ana: \u200ePTT-20261201-WA0000.opus (archivo adjunto)\n"
+            "1/12/26, 9:02 - Beto: https://example.com/x\n"
+            "1/12/26, 9:03 - Beto: Chau\n")
+        note = walk_row(1, "described", "Mensaje de voz, 0 segundos transcurrido(s)", "sent", rid="audio_seekbar")
+        chau = walk_row(3, "message", "Chau", "received")
+        for between in ([note],                                                                  # a voice note written twice
+                        [walk_row(2, "message", "https://other.org/y", "received"),
+                         walk_row(2, "message", "a message typed there", "received")]):          # another link and a message
+            rows, counts = check_export.compare(export, [note] + between + [chau], "Ana")
+            self.assertFalse(check_export.passed(counts), between)
+            self.assertEqual([r["result"] for r in rows if r["kind"] == "link"], [check_export.MISSING])
+
+    def export_with_chat(self, chat=EXPORT_CHAT):
+        import zipfile
+        out = run(FakePhone(count=12))[0]
+        m = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8"))
+        m["apps_under_test"][0]["package"] = "com.whatsapp"
+        with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        z = os.path.join(tempfile.mkdtemp(), "Chat de WhatsApp con Grupo.zip")
+        self.addCleanup(shutil.rmtree, os.path.dirname(z))
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("Chat de WhatsApp con Grupo.txt", chat.encode("utf-8"))
+            f.writestr("PTT-20261201-WA0000.opus", b"\x00" * 300)
+        appwalk.attach_file(out, local_path=z, note="made up")
+        return out
+
+    def test_the_command_checks_the_zip_its_sender_and_the_transcript_file(self):
+        import check_export
+        from unittest import mock
+        out = self.export_with_chat()
+        with mock.patch.object(transcript, "build", lambda export, folder=None: (walk_of_the_chat(), [], {})):
+            with self.assertRaises(check_export.CheckStopped) as e:
+                check_export.check(out, "Carla")
+            self.assertIn("Ana, Beto", str(e.exception))
+            # The owner wrote nothing: every message is received, so Ana's are in the wrong direction.
+            ok, lines = check_export.check(out, "Carla", owner_wrote_nothing=True)
+            self.assertFalse(ok)
+            ok, lines = check_export.check(out, "Ana")
+        # The transcript.csv on disk is the fake phone's, not this one: it is said, and its counts given too.
+        self.assertTrue(any("DIFFERS" in x for x in lines), lines)
+        self.assertFalse(ok)
+        self.assertTrue(lines[-1].startswith("export check: DIFFERENCES"))
+        summary = "\n".join(lines)
+        for want in ("transcript.py sha256", "profile com.whatsapp.json", "Chat de WhatsApp con Grupo.zip, sha256",
+                     "latest row hash", "texts: 3 in the export, 3 found (3 with the direction the export gives)"):
+            self.assertIn(want, summary)
+        for name in (check_export.CSV_NAME, check_export.TXT_NAME, check_export.FILE_CSV_NAME):
+            self.assertTrue(os.path.exists(os.path.join(out, name)), name)
+        # Its files are in the export's main folder, so the export still checks.
+        self.assertTrue(all(ok for _, _, ok in appwalk.verify_export(out)))
+        # A zip that no longer matches its chained row is not read.
+        with open(os.path.join(out, "attachments", "Chat de WhatsApp con Grupo.zip"), "ab") as f:
+            f.write(b"x")
+        with self.assertRaises(check_export.CheckStopped) as e:
+            check_export.check(out, "Ana")
+        self.assertIn("does not match the SHA-256", str(e.exception))
+
+    def test_a_call_is_an_empty_message_in_the_export_and_a_call_line_in_the_walk(self):
+        # As the Samsung SM-G990E exported a voice call it made and a video call it missed (21 November 2026).
+        import check_export
+        export = check_export.parse_export(
+            "21/11/2026, 19:09 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "21/11/2026, 19:25 - Beto: Chau\n"
+            "21/11/2026, 19:28 - Ana: \n"
+            "21/11/2026, 19:28 - Beto: \n")
+        self.assertEqual([(x["n"], x["kind"], x["author"]) for x in export],
+                         [(1, "system", ""), (2, "text", "Beto"), (3, "call", "Ana"), (4, "call", "Beto")])
+        walk = [walk_row(1, "message", "Chau", "received"),
+                walk_row(2, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(3, "other", "16 s", rid="call_log_subtitle", side="right"),
+                walk_row(4, "other", "Videollamada perdida", rid="call_log_title", side="left"),
+                walk_row(5, "other", "Tocar para volver a llamar", rid="call_log_subtitle", side="left")]
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["export"], counts["call"]["found"], counts["call"]["direction_right"]), (2, 2, 2))
+        # With the wrong owner the calls' directions do not agree, and the check does not pass.
+        _, counts = check_export.compare(export, walk, "Beto")
+        self.assertFalse(check_export.passed(counts))
+
+    def test_an_empty_message_before_an_album_is_the_album_not_a_call(self):
+        # As both phones exported an album of 3 photos and then a call (22 November 2026): the empty line before the
+        # album's photos, same sender and minute, starts the album.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0000.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:06 - Ana: \n"
+            "22/11/2026, 12:07 - Beto: \n"
+            "22/11/2026, 12:07 - Ana: \u200eIMG-20261122-WA0003.jpg (archivo adjunto)\n")
+        self.assertEqual([(x["n"], x["kind"]) for x in export],
+                         [(1, "system"), (2, "album"), (3, "picture"), (4, "picture"), (5, "picture"), (6, "call"),
+                          (7, "call"), (8, "picture")])   # 7: Beto's empty line is not followed by Beto's photos
+        album = [walk_row(k, "described", f"Ver foto, {k} de 3", "sent", rid="thumb") for k in (1, 2, 3)]
+        rows, counts = check_export.compare(export, album, "Ana")
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "album"], [check_export.ALBUM])
+        self.assertEqual((counts["call"]["export"], counts["picture"]["export"]), (2, 4))
+
+    def test_a_call_and_two_photos_sent_apart_are_not_an_album(self):
+        # abrignoni/appwalk#62: a call followed by two photos sent one by one in the same minute was read as an album,
+        # and the call and the photos came out as differences. The walk has the call and two photos on their own.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                walk_row(3, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["found"], counts["picture"]["found"]), (1, 2))
+        self.assertEqual({r["result"] for r in rows if r["export_line"]}, {check_export.SYSTEM, check_export.FOUND})
+        # With the walk showing an album of 2 instead, the same lines are an album.
+        album = [walk_row(k, "described", f"Ver foto, {k} de 2", "sent", rid="thumb") for k in (1, 2)]
+        rows, counts = check_export.compare(export, album, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual(([r["result"] for r in rows if r["kind"] == "album"], counts["call"]["export"]), ([check_export.ALBUM], 0))
+
+    def test_an_albums_photos_and_the_ones_behind_its_last_tile(self):
+        # As the Samsung SM-G990E walked an album of 3 it sent and one of 6 it received (22 November 2026): the grid of
+        # 6 shows three photos and a fourth tile, "Ver los 6 archivos multimedia", over the other three.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            + "".join(f"22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (1, 2, 0))
+            + "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7))
+            + "22/11/2026, 12:16 - Beto: \u200eVID-20261122-WA0009.mp4 (archivo adjunto)\n")
+        walk = ([walk_row(k, "described", f"Ver foto, {k} de 3", "sent", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(3 + k, "described", f"Ver foto, {k} de 6", "received", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(7, "described", "Ver los 6 archivos multimedia", "received", rid="thumb"),
+                   walk_row(8, "other", "+ 3", rid="more"),
+                   walk_row(9, "described", "Video, HD, duration 5 segundos", "received", rid="thumb")])
+        rows, counts = check_export.compare(export, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        c = counts["picture"]
+        self.assertEqual((c["export"], c["found"], c["behind_tile"], c["missing"], c["only_walk"]), (9, 6, 3, 0, 0))
+        self.assertEqual((counts["video"]["found"], counts["video"]["direction_right"]), (1, 1))
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "album tile"], [check_export.TILE])
+        self.assertEqual(sum(1 for r in rows if r["result"] == check_export.BEHIND_TILE), 3)
+        # A photo the grid shows and the walk does not have is still missing, not behind a tile.
+        rows, counts = check_export.compare(export, walk[:2] + walk[3:], "Ana")
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["behind_tile"]), (1, 3))
+
+    def test_the_last_tile_stands_for_the_files_on_it_not_all_the_rest(self):
+        # abrignoni/appwalk#62: an album of 6 with only photo 1 and the tile in the walk passed, with 5 behind a tile
+        # that stands for 3. The other 2 photos the grid shows are missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7)))
+        tile = walk_row(2, "described", "Ver los 6 archivos multimedia", "received", rid="thumb")
+        for walk in ([walk_row(1, "described", "Ver foto, 1 de 6", "received", rid="thumb"), tile, walk_row(3, "other", "+ 3", rid="more")],
+                     [walk_row(1, "described", "Ver foto, 1 de 6", "received", rid="thumb"), tile]):   # with no "+ 3" line
+            _, counts = check_export.compare(export, walk, "Ana")
+            c = counts["picture"]
+            self.assertEqual((c["found"], c["behind_tile"], c["missing"]), (1, 3, 2))
+            self.assertFalse(check_export.passed(counts))
+
+    def test_a_large_emoji_written_twice_fails_as_a_text_written_twice_does(self):
+        # abrignoni/appwalk#62: the same thing with a text failed, with a large emoji (a described line) it passed.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Ana: Hola\n"
+            "22/11/2026, 12:01 - Beto: \U0001F44D\n")
+        for second in (walk_row(3, "described", "\U0001F44D", "received", rid="media_container", desc="\U0001F44D"),
+                       walk_row(3, "message", "\U0001F44D", "received")):
+            walk = [walk_row(1, "message", "Hola", "sent"),
+                    walk_row(2, "described", "\U0001F44D", "received", rid="media_container", desc="\U0001F44D"), second]
+            rows, counts = check_export.compare(export, walk, "Ana")
+            self.assertEqual((counts["text"]["found"], counts["text"]["only_walk"]), (2, 1))
+            self.assertFalse(check_export.passed(counts))
+        # A keycap emoji holds a digit and is still an emoji.
+        keycap = "3️⃣"
+        export2 = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            f"22/11/2026, 12:01 - Beto: {keycap}\n")
+        _, counts2 = check_export.compare(export2, [walk_row(k, "described", keycap, "received", rid="media_container")
+                                                   for k in (1, 2)], "Ana")
+        self.assertEqual((counts2["text"]["found"], counts2["text"]["only_walk"]), (1, 1))
+        # A described line with words in it (a sticker, a GIF) is not a text.
+        rows, counts = check_export.compare(export, walk[:2] + [walk_row(3, "described", "Sticker", "received", rid="media_container")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_a_walk_that_found_nothing_does_not_pass(self):
+        # Found testing made-up chats for #62: with one end unsure and no line found, every export line was "not
+        # walked" and the check passed.
+        import check_export
+        from unittest import mock
+        export = check_export.parse_export(EXPORT_CHAT)
+        for ends in ((True, False), (False, True), (True, True)):
+            rows, counts = check_export.compare(export, [], "Ana", ends=ends)
+            self.assertFalse(check_export.passed(counts), ends)
+            self.assertNotIn(check_export.NOT_WALKED, [r["result"] for r in rows])
+        # End to end: a walk whose transcript is empty is still checked as the item the log walked.
+        out = self.export_with_chat()
+        with mock.patch.object(transcript, "build", lambda export, folder=None: ([], [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        self.assertFalse(ok)
+
+    def test_a_walk_that_stopped_short_is_lined_up_from_the_end_it_reached(self):
+        # A walk with --stop-at covers the newest messages. Found testing made-up chats for #62: an "ok" said four
+        # times, the walk showing only the newest, was found in the oldest copy and the other three were missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            + "".join(f"22/11/2026, 12:0{k} - Ana: ok\n" for k in range(4)))
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "ok", "sent")], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "text"],
+                         [check_export.NOT_WALKED] * 3 + [check_export.FOUND])
+
+    def test_a_missing_line_is_not_taken_for_the_same_words_from_the_other_side(self):
+        # Found testing made-up chats for #62: the walk lacks Ana's "ok" and has Beto's. Lined up blind to direction,
+        # Ana's "ok" took Beto's (direction wrong) and Beto's came out missing.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Ana: ok\n"
+            "22/11/2026, 12:01 - Beto: ok\n")
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "ok", "received")], "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"], counts["text"]["missing"]), (1, 1, 1))
+        self.assertEqual([(r["author"], r["result"]) for r in rows if r["kind"] == "text"],
+                         [("Ana", check_export.MISSING), ("Beto", check_export.FOUND)])
+        # A line the walk has with the wrong direction is still found, and said to be wrong.
+        rows, counts = check_export.compare(export[:2], [walk_row(1, "message", "ok", "received")], "Ana")
+        self.assertEqual([r["direction_agrees"] for r in rows if r["kind"] == "text"], ["NO"])
+
+    def album_chat(self, *albums, after=""):
+        """An export with an encryption notice and, for each (sender, minute, files), an album."""
+        import check_export
+        text = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        wa = 0
+        for sender, minute, files in albums:
+            text += f"22/11/2026, 12:{minute:02d} - {sender}: \n"
+            for _ in range(files):
+                text += f"22/11/2026, 12:{minute:02d} - {sender}: \u200eIMG-20261122-WA{wa:04d}.jpg (archivo adjunto)\n"
+                wa += 1
+        return check_export.parse_export(text + after)
+
+    def grid(self, size, direction, start=1, shown=None):
+        """An album's grid as a walk reads it: its photos, and a last tile with "+ N" when it has more than four."""
+        rows = [walk_row(start + k, "described", f"Ver foto, {k + 1} de {size}", direction, rid="thumb")
+                for k in range(shown if shown is not None else (size if size <= 4 else 3))]
+        if size > 4:
+            rows += [walk_row(start + 3, "described", f"Ver los {size} archivos multimedia", direction, rid="thumb"),
+                     walk_row(start + 3, "other", f"+ {size - 3}", rid="more")]
+        return rows
+
+    def test_albums_are_lined_up_as_a_whole(self):
+        # Found testing made-up chats for #62. Photo by photo, two albums of 6 side by side mixed their photos (one
+        # album all missing), and a grid the walk wrote twice took the photos behind the tile and passed.
+        import check_export
+        two = self.album_chat(("Ana", 5, 6), ("Beto", 6, 6))
+        rows, counts = check_export.compare(two, self.grid(6, "sent") + self.grid(6, "received", 10), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"]), (6, 6))
+        one = self.album_chat(("Beto", 6, 6))
+        rows, counts = check_export.compare(one, self.grid(6, "received") + self.grid(6, "received", 10), "Ana")
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"], counts["picture"]["only_walk"]), (3, 3, 4))
+        # An album's caption shows under its grid, while the export has it after the first file.
+        cap = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\nLa playa\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0000.jpg (archivo adjunto)\n")
+        rows, counts = check_export.compare(cap, self.grid(3, "sent") + [walk_row(4, "message", "La playa", "sent", rid="caption")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_an_album_is_settled_where_it_stands(self):
+        # Found testing made-up chats for #62: an album decided by whether an album of its size was anywhere in the
+        # walk. A photo sent on its own right after an album, same minute, made an album of 4 that became a call; an
+        # album in the part not walked counted as a call; a call with two photos counted as an album when another
+        # album of 2 was in the walk.
+        import check_export
+        plus_one = self.album_chat(("Ana", 5, 4))
+        rows, counts = check_export.compare(plus_one, self.grid(3, "sent") + [walk_row(9, "described", "Agrandar foto", "sent", rid="image")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["call"]["export"]), (4, 0))
+        unwalked = self.album_chat(("Ana", 5, 3), after="22/11/2026, 12:09 - Beto: Hola\n")
+        rows, counts = check_export.compare(unwalked, [walk_row(1, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["not_walked"], counts["call"]["export"]), (3, 0))
+        call_then_album = self.album_chat(("Ana", 5, 2), ("Beto", 7, 2))
+        walk = ([walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                 walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                 walk_row(3, "described", "Agrandar foto", "sent", rid="image")] + self.grid(2, "received", 4))
+        rows, counts = check_export.compare(call_then_album, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["call", "album"])
+        # A walk that stopped half way up an album's grid read its bottom row, photo 3 and the tile: photos 1 and 2,
+        # above where it stopped, are not walked.
+        cut = self.album_chat(("Beto", 5, 6))
+        rows, counts = check_export.compare(cut, self.grid(6, "received")[2:], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["picture"]["behind_tile"]), (1, 2, 3))
+
+    def test_the_line_up_counts_lines_first_and_directions_only_to_break_ties(self):
+        # Found testing made-up chats for #62, after lining up by direction first: a line with no direction, or the
+        # wrong one, left a line the walk has as missing; and a sticker among repeated texts stranded an "ok".
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        two = check_export.parse_export(head + "22/11/2026, 12:00 - Ana: hola\n22/11/2026, 12:01 - Ana: hola\n")
+        _, counts = check_export.compare(two, [walk_row(1, "message", "hola", ""), walk_row(2, "message", "hola", "sent")], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        okok = check_export.parse_export(head + "22/11/2026, 12:00 - Ana: ok\n22/11/2026, 12:01 - Beto: ok\n")
+        rows, counts = check_export.compare(okok, [walk_row(1, "message", "ok", "received"), walk_row(2, "message", "ok", "received")], "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"], counts["text"]["missing"]), (2, 1, 0))
+        self.assertEqual([r["direction_agrees"] for r in rows if r["kind"] == "text"], ["NO", "yes"])
+        sticker = check_export.parse_export(
+            head + "22/11/2026, 12:00 - Ana: ok\n"
+            "22/11/2026, 12:01 - Ana: \u200eSTK-20261122-WA0000.webp (archivo adjunto)\n"
+            "22/11/2026, 12:02 - Ana: ok\n22/11/2026, 12:03 - Ana: ok\n")
+        walk = [walk_row(1, "message", "ok", "sent"), walk_row(2, "described", "Sticker", "sent", rid="media_container"),
+                walk_row(3, "message", "ok", "sent"), walk_row(4, "message", "ok", "sent")]
+        _, counts = check_export.compare(sticker, walk, "Ana")
+        self.assertEqual((counts["text"]["found"], counts["text"]["missing"], counts["text"]["only_walk"]), (3, 0, 0))
+
+    def test_an_album_is_read_the_way_that_lines_up_the_most(self):
+        # Found testing made-up chats for #62, round two: an album settled by what was free near it lost its photo to
+        # a later photo of the same sender, an album of 5 and a photo before an album of 6 took the wrong album, and
+        # a call and photos out of order still passed.
+        import check_export
+        later = self.album_chat(("Ana", 5, 4), after="22/11/2026, 12:07 - Ana: \u200eIMG-20261122-WA0099.jpg (archivo adjunto)\n")
+        single = lambda n: walk_row(n, "described", "Agrandar foto", "sent", rid="image")
+        _, counts = check_export.compare(later, self.grid(3, "sent") + [single(4), single(5)], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        sixes = self.album_chat(("Ana", 0, 6), ("Ana", 1, 6))       # an album of 5 and a photo, then an album of 6
+        _, counts = check_export.compare(sixes, self.grid(5, "sent") + [single(5)] + self.grid(6, "sent", 7), "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["behind_tile"]), (7, 5))
+        call = self.album_chat(("Ana", 5, 2))
+        reversed_walk = [single(1), single(2), walk_row(3, "other", "Llamada", rid="call_log_title", side="right")]
+        _, counts = check_export.compare(call, reversed_walk, "Ana")
+        self.assertFalse(check_export.passed(counts))
+
+    def test_the_best_reading_of_all_the_albums_is_kept(self):
+        # Found again after round two: an album of 2, then a call with two photos sent apart. Reading the first album
+        # as the call helped, so it was taken, and the real album and the call came out wrong.
+        import check_export
+        chat = self.album_chat(("Ana", 5, 2), ("Ana", 30, 2))
+        walk = self.grid(2, "sent") + [walk_row(3, "other", "Llamada", rid="call_log_title", side="right"),
+                                       walk_row(4, "described", "Agrandar foto", "sent", rid="image"),
+                                       walk_row(5, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["kind"] for r in rows if r["export_line"] in (2, 5)], ["album", "call"])
+
+    def test_albums_far_apart_are_read_in_the_same_round(self):
+        # Found testing made-up chats for #62, round three: five albums of 3, each an album of 2 and a photo sent on
+        # its own. Read one at a time over the whole chat, the last one gained nothing and came out as a missing call
+        # and two missing photos.
+        import check_export
+        chat = self.album_chat(*[("Ana", minute, 3) for minute in range(5, 10)])
+        walk = []
+        for k in range(5):
+            walk += self.grid(2, "sent", 1 + 3 * k) + [walk_row(3 + 3 * k, "described", "Agrandar foto", "sent", rid="image")]
+        _, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["missing"], counts["call"]["export"]), (15, 0, 0))
+
+    def test_a_walk_that_stopped_short_reads_the_albums_it_reached(self):
+        # Found testing made-up chats for #62, last round: with the oldest end unsure, an album of 3 and a photo sent
+        # alone (an album of 4 in the export) was read in an older album of 4 the walk never reached, and a call with
+        # two photos sent apart was lined up with an older call and photos; what lay between came out missing.
+        import check_export
+        single = lambda n: walk_row(n, "described", "Agrandar foto", "sent", rid="image")
+        chau = walk_row(9, "message", "Chau", "received")
+        img = lambda minute, k: f"22/11/2026, 12:{minute:02d} - Ana: \u200eIMG-20261122-WA{k:04d}.jpg (archivo adjunto)\n"
+        chat = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:01 - Ana: \n" + "".join(img(1, k) for k in range(4))                 # not walked
+            + "".join(f"22/11/2026, 12:{2 + k:02d} - Beto: mensaje {k}\n" for k in range(5))
+            + "22/11/2026, 12:10 - Ana: \n" + "".join(img(10, k) for k in range(10, 14))          # 3 and 1 alone
+            + "22/11/2026, 12:11 - Beto: Chau\n")
+        _, counts = check_export.compare(chat, self.grid(3, "sent") + [single(4), chau], "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["not_walked"], counts["text"]["not_walked"]), (4, 4, 5))
+        calls = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:01 - Ana: \n22/11/2026, 12:02 - Beto: no te escuchaba\n" + img(3, 0) + img(4, 1)
+            + "22/11/2026, 12:05 - Beto: que lindas\n22/11/2026, 12:10 - Ana: \n" + img(10, 2) + img(10, 3)
+            + "22/11/2026, 12:11 - Beto: Chau\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"), single(2), single(3), chau]
+        _, counts = check_export.compare(calls, walk, "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["call"]["found"], counts["call"]["not_walked"], counts["text"]["not_walked"]), (1, 1, 2))
+
+    def test_a_walk_album_ends_with_its_grid_its_sender_or_a_new_photo_1(self):
+        # Found testing made-up chats for #62, round two: two albums of 3 in a row, the first missing photo 3, became
+        # one album; a tile read before photo 3 ended the album; an album with no tile ran into the next one.
+        import check_export
+        ab = self.album_chat(("Ana", 5, 3), ("Beto", 6, 3))
+        _, counts = check_export.compare(ab, self.grid(3, "sent", shown=2) + self.grid(3, "received", 5), "Ana")
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
+                          counts["picture"]["only_walk"]), (5, 5, 1, 0))
+        six = self.album_chat(("Beto", 5, 6))
+        g = self.grid(6, "received")
+        _, counts = check_export.compare(six, g[:2] + g[3:] + g[2:3], "Ana")        # 1, 2, the tile and "+ 3", then 3
+        self.assertTrue(check_export.passed(counts), counts)
+        sixes = self.album_chat(("Beto", 5, 6), ("Ana", 6, 6))
+        _, counts = check_export.compare(sixes, self.grid(6, "received")[:3] + self.grid(6, "sent", 10), "Ana")
+        self.assertEqual((counts["picture"]["found"], counts["picture"]["direction_right"], counts["picture"]["missing"],
+                          counts["picture"]["behind_tile"]), (6, 6, 0, 6))   # Beto's tile unread: his 3 are still behind it
+
+    def test_a_stray_tile_counts_and_an_edge_is_past_the_photos_read(self):
+        # Found testing made-up chats for #62, round two: a tile written twice, or a tile with no album in the export,
+        # passed uncounted; and at an unsure end a photo skipped between photos the walk read was "not walked".
+        import check_export
+        six = self.album_chat(("Beto", 5, 6))
+        g = self.grid(6, "received")
+        _, counts = check_export.compare(six, g + g[3:], "Ana")                     # the tile and "+ 3" twice
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual(counts["picture"]["only_walk"], 1)
+        three = self.album_chat(("Ana", 5, 3), after="22/11/2026, 12:09 - Beto: Hola\n")
+        g = self.grid(3, "sent")
+        _, counts = check_export.compare(three, [g[0], g[2], walk_row(9, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (1, 0))   # photo 2 skipped
+        _, counts = check_export.compare(three, [g[2], walk_row(9, "message", "Hola", "received")], "Ana", ends=(True, False))
+        self.assertEqual((counts["picture"]["missing"], counts["picture"]["not_walked"]), (0, 2))   # 1 and 2 above
+
+    def test_a_link_card_as_whatsapp_shows_it(self):
+        # Found testing made-up chats for #62, round two. WhatsApp's card is title, snippet and url lines with role
+        # other, which were never seen; two links in a row took one card; "x.com" was found in "netflix.com"; a link
+        # with no scheme was not a link.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        card = lambda title, host: [walk_row(2, "other", title, rid="title", side="left"),
+                                    walk_row(2, "other", host, rid="url", side="left")]
+        chau = walk_row(3, "message", "Chau", "received")
+        one = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        rows, counts = check_export.compare(one, card("GitHub - x", "github.com") + [chau], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["result"] for r in rows if r["kind"] == "link"], [check_export.LINK_CARD])
+        two = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://github.com/x\n"
+                                        "1/12/26, 9:02 - Beto: https://example.org/y\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(two, card("GitHub - x", "github.com") + card("Example", "example.org") + [chau], "Ana")
+        self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (2, 0))
+        x = check_export.parse_export(head + "1/12/26, 9:02 - Beto: https://x.com/abc\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(x, card("Netflix", "netflix.com") + [chau], "Ana")
+        self.assertEqual(counts["link"]["missing"], 1)
+        bare = check_export.parse_export(head + "1/12/26, 9:02 - Beto: www.github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        self.assertEqual(bare[1]["kind"], "link")
+        _, counts = check_export.compare(bare, card("GitHub", "github.com") + [chau], "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_the_summary_calls_an_album_read_as_a_call_a_call(self):
+        # Found testing made-up chats for #62, round two: an album's first line read as a call was still summed up as
+        # an album.
+        import check_export
+        from unittest import mock
+        out = self.export_with_chat(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:05 - Ana: \n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0001.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA0002.jpg (archivo adjunto)\n")
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"),
+                walk_row(3, "described", "Agrandar foto", "sent", rid="image")]
+        with mock.patch.object(transcript, "build", lambda export, folder=None: ([{c: r.get(c, "") for c in transcript.COLUMNS} for r in walk], [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        summary = "\n".join(lines)
+        self.assertIn("3 messages in the export, 1 system line(s), 1 call(s) written like an album's first line", summary)
+        self.assertNotIn("album(s)", summary)
+
+    def test_a_link_card_is_made_of_card_lines_only(self):
+        # Found testing made-up chats for #62, round three: a text the walk wrote twice beside a card was taken into
+        # it; "github.com.evil.org" passed for github.com; an address urlsplit cannot read crashed; a card written
+        # twice passed; a link the walk lacks took the card of another link it found by its text.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        card = lambda host: [walk_row(2, "other", "Title", rid="title", side="left"), walk_row(2, "other", host, rid="url", side="left")]
+        chau = walk_row(3, "message", "Chau", "received")
+        one = check_export.parse_export(head + "1/12/26, 9:01 - Beto: Chau\n1/12/26, 9:02 - Beto: https://github.com/x\n1/12/26, 9:03 - Beto: Chau\n")
+        _, counts = check_export.compare(one, [chau, chau] + card("github.com") + [chau], "Ana")      # Chau written twice
+        self.assertFalse(check_export.passed(counts))
+        self.assertEqual(counts["text"]["only_walk"], 1)
+        _, counts = check_export.compare(one, [chau] + card("github.com.evil.org") + [chau], "Ana")
+        self.assertEqual(counts["link"]["missing"], 1)
+        _, counts = check_export.compare(one, [chau] + card("github.com") + card("github.com") + [chau], "Ana")
+        self.assertFalse(check_export.passed(counts))                                                   # a card twice
+        odd = check_export.parse_export(head + "1/12/26, 9:02 - Beto: http://[x/abc\n")
+        rows, counts = check_export.compare(odd, card("x"), "Ana")                                      # no crash
+        self.assertEqual(counts["link"]["missing"], 1)
+        two = check_export.parse_export(head + "1/12/26, 9:01 - Beto: https://github.com/a\n1/12/26, 9:02 - Beto: https://github.com/b\n")
+        found = walk_row(4, "message", "https://github.com/b", "received")
+        _, counts = check_export.compare(two, card("github.com") + [found], "Ana")
+        self.assertEqual((counts["link"]["found"], counts["link"]["missing"]), (1, 1))                  # b's card is b's
+
+    def test_a_text_with_a_link_owns_its_card(self):
+        # Found testing made-up chats for #62, last round: a text with words and a link has a preview card too, and
+        # the export calls it a text. Its card was counted as a link the export does not have.
+        import check_export
+        head = "1/12/26, 9:00 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        chat = check_export.parse_export(head + "1/12/26, 9:01 - Ana: Hola\n1/12/26, 9:02 - Beto: mira esto https://example.com/x\n"
+                                                "1/12/26, 9:03 - Beto: Chau\n")
+        walk = [walk_row(1, "message", "Hola", "sent"), walk_row(2, "other", "Example Domain", rid="title", side="left"),
+                walk_row(2, "other", "example.com", rid="url", side="left"),
+                walk_row(2, "message", "mira esto https://example.com/x", "received"), walk_row(3, "message", "Chau", "received")]
+        _, counts = check_export.compare(chat, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual((counts["text"]["found"], counts["link"]["only_walk"]), (3, 0))
+
+    def test_a_caption_follows_its_own_file_in_every_reading(self):
+        # Found testing made-up chats for #62, round three: read as a call with photos, or as a smaller album and a
+        # photo, an album's captions stayed after all its files, while the walk shows each under its own photo; and
+        # the call's row kept the album's "2 files".
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        img = lambda k: f"22/11/2026, 12:05 - Ana: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n"
+        call = check_export.parse_export(head + "22/11/2026, 12:05 - Ana: \n" + img(1) + "Mira\n" + img(2))
+        walk = [walk_row(1, "other", "Llamada", rid="call_log_title", side="right"),
+                walk_row(2, "described", "Agrandar foto", "sent", rid="image"), walk_row(3, "message", "Mira", "sent", rid="caption"),
+                walk_row(4, "described", "Agrandar foto", "sent", rid="image")]
+        rows, counts = check_export.compare(call, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+        self.assertEqual([r["text"] for r in rows if r["kind"] == "call"], [""])
+        smaller = check_export.parse_export(head + "22/11/2026, 12:05 - Ana: \n" + img(1) + "Viaje\n" + img(2) + img(3))
+        walk = self.grid(2, "sent") + [walk_row(3, "message", "Viaje", "sent", rid="caption"),
+                                       walk_row(4, "described", "Agrandar foto", "sent", rid="image")]
+        _, counts = check_export.compare(smaller, walk, "Ana")
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_a_grid_is_split_by_its_numbers_not_its_directions(self):
+        # Found testing made-up chats for #62, round three: one photo with the wrong direction broke a grid into
+        # pieces; the bottom of one album and the next album of the same sender, at the walk's oldest end, became one;
+        # an album of 6 whose bottom row the walk missed had 4 missing; with both ends unsure, photos past the last
+        # one read were missing.
+        import check_export
+        six = self.album_chat(("Ana", 5, 6))
+        g = self.grid(6, "sent")
+        g[1] = walk_row(2, "described", "Ver foto, 2 de 6", "received", rid="thumb")
+        _, counts = check_export.compare(six, g, "Ana")
+        c = counts["picture"]
+        self.assertEqual((c["found"], c["direction_right"], c["behind_tile"], c["missing"], c["only_walk"]), (3, 2, 3, 0, 0))
+        twice = self.album_chat(("Ana", 5, 6), ("Ana", 6, 6))
+        _, counts = check_export.compare(twice, self.grid(6, "sent")[2:] + self.grid(6, "sent", 10), "Ana", ends=(True, False))
+        self.assertTrue(check_export.passed(counts), counts)
+        _, counts = check_export.compare(six, self.grid(6, "sent")[:2], "Ana")
+        c = counts["picture"]
+        self.assertEqual((c["found"], c["missing"], c["behind_tile"]), (2, 1, 3))
+        three = self.album_chat(("Ana", 5, 3))
+        _, counts = check_export.compare(three, self.grid(3, "sent")[:2], "Ana", ends=(True, True))
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_repeated_lines_are_lined_up_with_the_copy_that_fits(self):
+        # Found testing made-up chats for #62, round three: the line-up looked only near difflib's first match, so in
+        # a run of "ok" the owner's line was missed; and the stretch before the first line found once, with both ends
+        # unsure, was lined up with the copies at the far end of the chat.
+        import check_export
+        head = "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+        oks = check_export.parse_export(head + "".join(f"22/11/2026, 12:0{k} - Ana: ok\n" for k in range(5)) + "22/11/2026, 12:06 - Yo: ok\n")
+        rows, counts = check_export.compare(oks, [walk_row(1, "message", "ok", "sent")], "Yo")
+        self.assertEqual((counts["text"]["found"], counts["text"]["direction_right"]), (1, 1))
+        self.assertEqual([r["result"] for r in rows if r["author"] == "Yo"], [check_export.FOUND])
+        middle = check_export.parse_export(head + "".join(f"22/11/2026, 12:0{k} - Ana: {t}\n" for k, t in enumerate(["ok", "hola", "ok", "b", "c", "ok"])))
+        _, counts = check_export.compare(middle, [walk_row(1, "message", "hola", "sent"), walk_row(2, "message", "ok", "sent")], "Ana", ends=(True, True))
+        self.assertTrue(check_export.passed(counts), counts)
+
+    def test_the_owners_name_matches_however_it_is_typed(self):
+        # A name with an emoji joined by U+200D: the export's names are read without it, the --me given had it.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas están cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - Lu \U0001F469\u200d\U0001F9B0: Hola\n")
+        rows, counts = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")], "Lu \U0001F469\u200d\U0001F9B0")
+        self.assertEqual(counts["text"]["direction_right"], 1)
+        _, counts = check_export.compare(export, [walk_row(1, "message", "Hola", "sent")], "Lu  \u200f\U0001F469\U0001F9B0 ")
+        self.assertEqual(counts["text"]["direction_right"], 1)
+        # A contact not saved is its number between U+202A and U+202C (found testing made-up chats, last round).
+        number = check_export.parse_export(
+            "22/11/2026, 11:59 - Los mensajes y las llamadas est\u00e1n cifrados de extremo a extremo.\n"
+            "22/11/2026, 12:00 - \u202a+99 9 99 0000-0001\u202c: Hola\n")
+        _, counts = check_export.compare(number, [walk_row(1, "message", "Hola", "sent")], "+99 9 99 0000-0001")
+        self.assertEqual(counts["text"]["direction_right"], 1)
+
+    def test_an_album_photo_is_one_of_the_albums_files_not_that_file(self):
+        # The export listed the album of 6's files as WA0003, WA0008, WA0004, …: nothing ties "Ver foto, 1 de 6" to
+        # one of them, so each found or hidden photo of an album says so; a photo sent on its own does not.
+        import check_export
+        export = check_export.parse_export(
+            "22/11/2026, 12:04 - Ana: \u200eIMG-20261121-WA0008.jpg (archivo adjunto)\n"
+            "22/11/2026, 12:15 - Beto: \n"
+            + "".join(f"22/11/2026, 12:15 - Beto: \u200eIMG-20261122-WA000{k}.jpg (archivo adjunto)\n" for k in (3, 8, 4, 5, 6, 7)))
+        walk = ([walk_row(1, "described", "Agrandar foto", "sent", rid="image")]
+                + [walk_row(1 + k, "described", f"Ver foto, {k} de 6", "received", rid="thumb") for k in (1, 2, 3)]
+                + [walk_row(5, "described", "Ver los 6 archivos multimedia", "received", rid="thumb")])
+        rows, _ = check_export.compare(export, walk, "Ana")
+        notes = {r["text"]: (r["result"], r["note"]) for r in rows if r["kind"] == "picture"}
+        self.assertEqual(notes["IMG-20261121-WA0008.jpg"], (check_export.FOUND, ""))
+        self.assertEqual({n for t, (_, n) in notes.items() if "20261122" in t}, {check_export.ALBUM_NOTE})
+
+    def test_a_transcript_file_that_agrees_says_what_it_does_not_show(self):
+        import check_export
+        out = self.export_with_chat()
+        rows = walk_of_the_chat()
+        with open(os.path.join(out, "transcript.csv"), "w", newline="", encoding="utf-8") as f:
+            f.write(check_export.csv_text([{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows], transcript.COLUMNS))
+        from unittest import mock
+        built = [{c: r.get(c, "") for c in transcript.COLUMNS} for r in rows]
+        # The counts on the file left by an earlier check, when it differed, go (found testing, last round).
+        with open(os.path.join(out, check_export.FILE_CSV_NAME), "w", encoding="utf-8") as f:
+            f.write("export_line,result\n2,missing\n")
+        with mock.patch.object(transcript, "build", lambda export, folder=None: (built, [], {})):
+            ok, lines = check_export.check(out, "Ana")
+        self.assertTrue(ok, lines)
+        self.assertTrue(any("says nothing about what the walk first wrote" in x for x in lines))
+        self.assertFalse(os.path.exists(os.path.join(out, check_export.FILE_CSV_NAME)))
+
+    def test_code_and_profile_hashes_do_not_depend_on_line_endings(self):
+        # Git on Windows checks files out with CRLF: the same transcript.py must give the hash GitHub's file gives.
+        import check_export
+        import hashlib
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        lf, crlf = os.path.join(d, "lf.py"), os.path.join(d, "crlf.py")
+        write(lf, b"a = 1\nb = 2\n")
+        write(crlf, b"a = 1\r\nb = 2\r\n")
+        self.assertEqual(check_export.sha256_text(lf), check_export.sha256_text(crlf))
+        self.assertEqual(check_export.sha256_text(crlf), hashlib.sha256(b"a = 1\nb = 2\n").hexdigest())
+        digest, _ = check_export.transcript_source()
+        self.assertEqual(digest, hashlib.sha256(read(transcript.__file__).replace(b"\r\n", b"\n")).hexdigest())
+
+
 if __name__ == "__main__":
     unittest.main()
